@@ -1,0 +1,38 @@
+{
+    "name": "cuts-styles/barberia",
+    "description": "Plataforma de barbería a domicilio estilo Uber para Panamá",
+    "type": "project",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "C-TECHPTY",
+            "email": "admin@cutsstyles.com"
+        }
+    ],
+    "minimum-stability": "stable",
+    "require": {
+        "php": ">=7.4",
+        "vlucas/phpdotenv": "^5.5",
+        "phpmailer/phpmailer": "^6.8",
+        "firebase/php-jwt": "^6.0"
+    },
+    "require-dev": {
+        "symfony/var-dumper": "^6.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "app/",
+            "App\\Controllers\\": "app/Controllers/",
+            "App\\Controllers\\Api\\": "app/Controllers/Api/",
+            "App\\Models\\": "app/Models/",
+            "App\\Services\\": "app/Services/",
+            "App\\Middleware\\": "app/Middleware/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "audit": {
+            "block-insecure": false
+        }
+    }
+}
