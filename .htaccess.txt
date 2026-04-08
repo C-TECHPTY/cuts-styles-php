@@ -1,0 +1,87 @@
+# .htaccess
+# Configuración de seguridad y URLs amigables
+
+# Proteger archivos sensibles
+<FilesMatch "\.(ini|log|sql|bak|config|md|json|lock)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Proteger carpetas específicas
+<FilesMatch "(composer\.json|composer\.lock|package\.json|package-lock\.json)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Prevenir acceso a directorios
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    
+    # Redirigir www a no-www
+    RewriteCond %{HTTP_HOST} ^www\.(.*)$ [NC]
+    RewriteRule ^(.*)$ http://%1/$1 [R=301,L]
+    
+    # Redirigir HTTP a HTTPS (descomentar en producción)
+    # RewriteCond %{HTTPS} off
+    # RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
+    
+    # URLs amigables para productos
+    RewriteRule ^producto/([0-9]+)$ ver_producto.php?id=$1 [L,QSA]
+    
+    # URLs amigables para servicios
+    RewriteRule ^servicio/([0-9]+)$ ver_servicio.php?id=$1 [L,QSA]
+    
+    # URLs amigables para barberos
+    RewriteRule ^barbero/([0-9]+)$ ver_barbero.php?id=$1 [L,QSA]
+    
+    # URLs amigables para categorías
+    RewriteRule ^categoria/([a-zA-Z0-9_-]+)$ productos.php?categoria=$1 [L,QSA]
+</IfModule>
+
+# Compresión GZIP
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript
+    AddOutputFilterByType DEFLATE application/javascript application/x-javascript application/json
+    AddOutputFilterByType DEFLATE image/svg+xml
+</IfModule>
+
+# Cabeceras de seguridad
+<IfModule mod_headers.c>
+    # Prevenir clickjacking
+    Header set X-Frame-Options "DENY"
+    
+    # Prevenir MIME type sniffing
+    Header set X-Content-Type-Options "nosniff"
+    
+    # Protección XSS
+    Header set X-XSS-Protection "1; mode=block"
+    
+    # Referrer Policy
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+    
+    # Content Security Policy (básica - ajustar según necesidades)
+    # Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com; img-src 'self' data:;"
+</IfModule>
+
+# Cache de navegador
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/jpg "access plus 1 year"
+    ExpiresByType image/jpeg "access plus 1 year"
+    ExpiresByType image/gif "access plus 1 year"
+    ExpiresByType image/png "access plus 1 year"
+    ExpiresByType text/css "access plus 1 month"
+    ExpiresByType application/javascript "access plus 1 month"
+</IfModule>
+
+# Limitar tamaño de subida
+php_value upload_max_filesize 10M
+php_value post_max_size 10M
+php_value max_execution_time 300
+
+# Ocultar versión de PHP
+<IfModule mod_headers.c>
+    Header unset X-Powered-By
+</IfModule>

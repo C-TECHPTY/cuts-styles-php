@@ -1,29 +1,76 @@
 <?php
+// register.php
 require_once 'config/config.php';
-require_once 'classes/User.php';
 
 $error = null;
 $success = null;
+$nombre = '';
+$email = '';
+$telefono = '';
+$rol = 'cliente';
 
-if($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $user = new User();
-    $user->email = $_POST['email'];
-    $user->password = $_POST['password'];
-    $user->nombre = $_POST['nombre'];
-    $user->telefono = $_POST['telefono'];
-    $user->rol = $_POST['rol'];
-    
-    // Validaciones
-    if($_POST['password'] !== $_POST['confirm_password']) {
-        $error = "Las contraseñas no coinciden";
-    } elseif(strlen($_POST['password']) < 6) {
-        $error = "La contraseña debe tener al menos 6 caracteres";
-    } else {
-        if($user->register()) {
-            $success = "Cuenta creada exitosamente. Ahora puedes iniciar sesión.";
-        } else {
-            $error = "Error al crear la cuenta. El email puede estar en uso.";
+// Generar token CSRF
+$csrf_token = generarCSRFToken();
+
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    try {
+        // Verificar token CSRF
+        verificarCSRFToken($_POST['csrf_token']);
+        
+        // Sanitizar entradas
+        $nombre = sanitizar($_POST['nombre']);
+        $email = sanitizarEmail($_POST['email']);
+        $telefono = sanitizar($_POST['telefono']);
+        $password = $_POST['password'];
+        $confirm_password = $_POST['confirm_password'];
+        $rol = sanitizar($_POST['rol']);
+        
+        // Validaciones
+        if (empty($nombre)) {
+            throw new Exception('El nombre es requerido');
         }
+        
+        if (!validarEmail($email)) {
+            throw new Exception('Email inválido');
+        }
+        
+        if (strlen($password) < 6) {
+            throw new Exception('La contraseña debe tener al menos 6 caracteres');
+        }
+        
+        if ($password !== $confirm_password) {
+            throw new Exception('Las contraseñas no coinciden');
+        }
+        
+        if (!in_array($rol, ['cliente', 'barbero'])) {
+            throw new Exception('Rol inválido');
+        }
+        
+        // Intentar registrar
+        require_once 'classes/User.php';
+        
+        $user = new User();
+        $user->email = $email;
+        $user->password = $password;
+        $user->nombre = $nombre;
+        $user->telefono = $telefono;
+        $user->rol = $rol;
+        
+        if ($user->register()) {
+            $success = "Cuenta creada exitosamente. Ahora puedes iniciar sesión.";
+            
+            // Limpiar campos
+            $nombre = $email = $telefono = '';
+            
+            // Regenerar token CSRF
+            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        } else {
+            throw new Exception('Error al crear la cuenta. El email puede estar en uso.');
+        }
+        
+    } catch (Exception $e) {
+        $error = $e->getMessage();
+        logError($error, __FILE__, __LINE__);
     }
 }
 ?>
@@ -170,6 +217,15 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
             align-items: center;
             gap: 10px;
         }
+        .role-warning {
+            margin-top: 10px;
+            padding: 10px;
+            background: #FFF3CD;
+            border-radius: 8px;
+            font-size: 12px;
+            color: #856404;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -182,18 +238,22 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
         
         <div class="register-form">
             <?php if($error): ?>
-                <div class="alert alert-error"><?php echo $error; ?></div>
+                <div class="alert alert-error"><?php echo htmlspecialchars($error); ?></div>
             <?php endif; ?>
             <?php if($success): ?>
-                <div class="alert alert-success"><?php echo $success; ?></div>
+                <div class="alert alert-success"><?php echo htmlspecialchars($success); ?></div>
             <?php endif; ?>
             
             <form method="POST" action="">
+                <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
+                
                 <div class="form-group">
                     <label>Nombre Completo</label>
                     <div class="input-group">
                         <i class="fas fa-user"></i>
-                        <input type="text" name="nombre" required placeholder="Tu nombre completo">
+                        <input type="text" name="nombre" required 
+                               value="<?php echo htmlspecialchars($nombre); ?>"
+                               placeholder="Tu nombre completo">
                     </div>
                 </div>
                 
@@ -201,7 +261,9 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
                     <label>Email</label>
                     <div class="input-group">
                         <i class="fas fa-envelope"></i>
-                        <input type="email" name="email" required placeholder="tucorreo@ejemplo.com">
+                        <input type="email" name="email" required 
+                               value="<?php echo htmlspecialchars($email); ?>"
+                               placeholder="tucorreo@ejemplo.com">
                     </div>
                 </div>
                 
@@ -209,7 +271,9 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
                     <label>Teléfono</label>
                     <div class="input-group">
                         <i class="fas fa-phone"></i>
-                        <input type="tel" name="telefono" required placeholder="+57 300 123 4567">
+                        <input type="tel" name="telefono" 
+                               value="<?php echo htmlspecialchars($telefono); ?>"
+                               placeholder="+57 300 123 4567">
                     </div>
                 </div>
                 
@@ -243,6 +307,10 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
                             <input type="radio" name="rol" value="barbero">
                         </label>
                     </div>
+                    <div class="role-warning" id="barbero-warning">
+                        <i class="fas fa-info-circle"></i>
+                        <small>Los barberos requieren verificación posterior con documentos.</small>
+                    </div>
                 </div>
                 
                 <div class="form-group terms">
@@ -268,6 +336,10 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
                 document.querySelectorAll('.role-option').forEach(opt => opt.classList.remove('selected'));
                 this.classList.add('selected');
                 this.querySelector('input').checked = true;
+                
+                // Mostrar advertencia para barberos
+                const isBarbero = this.querySelector('input').value === 'barbero';
+                document.getElementById('barbero-warning').style.display = isBarbero ? 'block' : 'none';
             });
         });
         

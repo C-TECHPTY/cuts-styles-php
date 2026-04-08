@@ -1,38 +1,70 @@
 <?php
 // login.php
 require_once 'config/config.php';
-require_once 'classes/User.php';
 
 $error = null;
+$email = '';
 
-if($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $email = trim($_POST['email']);
-    $password = $_POST['password'];
-    
-    $user = new User();
-    $user->email = $email;
-    $user->password = $password;
-    
-    if($user->login()) {
-        $_SESSION['user_id'] = $user->id;
-        $_SESSION['user_email'] = $user->email;
-        $_SESSION['user_rol'] = $user->rol;
-        $_SESSION['user_nombre'] = $user->nombre;
+// Generar token CSRF
+$csrf_token = generarCSRFToken();
+
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    try {
+        // Verificar token CSRF
+        verificarCSRFToken($_POST['csrf_token']);
         
-        // Redirigir según el rol
-        switch($user->rol) {
-            case 'admin':
-                header("Location: admin/dashboard.php");
-                break;
-            case 'barbero':
-                header("Location: barbero.php");
-                break;
-            default:
-                header("Location: cliente.php");
+        // Sanitizar entradas
+        $email = sanitizarEmail($_POST['email']);
+        $password = $_POST['password'];
+        
+        // Validar email
+        if (!validarEmail($email)) {
+            throw new Exception('Email inválido');
         }
-        exit();
-    } else {
-        $error = "Email o contraseña incorrectos";
+        
+        if (empty($password)) {
+            throw new Exception('La contraseña es requerida');
+        }
+        
+        // Intentar login
+        require_once 'classes/User.php';
+        
+        $user = new User();
+        $user->email = $email;
+        $user->password = $password;
+        
+        if ($user->login()) {
+            // Regenerar ID de sesión por seguridad
+            session_regenerate_id(true);
+            
+            // Generar nuevo token CSRF después del login
+            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+            
+            $_SESSION['user_id'] = $user->id;
+            $_SESSION['user_email'] = $user->email;
+            $_SESSION['user_rol'] = $user->rol;
+            $_SESSION['user_nombre'] = $user->nombre;
+            $_SESSION['ip_address'] = $_SERVER['REMOTE_ADDR'];
+            $_SESSION['user_agent'] = $_SERVER['HTTP_USER_AGENT'];
+            
+            // Redirigir según el rol
+            switch ($user->rol) {
+                case 'admin':
+                    redirect('admin/dashboard.php');
+                    break;
+                case 'barbero':
+                    redirect('barbero.php');
+                    break;
+                default:
+                    redirect('cliente.php');
+            }
+        } else {
+            throw new Exception('Email o contraseña incorrectos');
+        }
+        
+    } catch (Exception $e) {
+        $error = $e->getMessage();
+        logError($error, __FILE__, __LINE__);
     }
 }
 ?>
@@ -76,6 +108,10 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
         .login-header h1 {
             font-size: 28px;
             margin-bottom: 10px;
+        }
+        .login-header p {
+            opacity: 0.8;
+            font-size: 14px;
         }
         .login-form {
             padding: 40px 30px;
@@ -153,6 +189,7 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
             border-top: 1px solid #ECF0F1;
             font-size: 12px;
             color: #95A5A6;
+            text-align: center;
         }
     </style>
 </head>
@@ -166,15 +203,25 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
         
         <div class="login-form">
             <?php if($error): ?>
-                <div class="alert"><?php echo $error; ?></div>
+                <div class="alert"><?php echo htmlspecialchars($error); ?></div>
+            <?php endif; ?>
+            
+            <?php $flash = getFlash(); if($flash): ?>
+                <div class="alert alert-<?php echo $flash['type']; ?>">
+                    <?php echo htmlspecialchars($flash['message']); ?>
+                </div>
             <?php endif; ?>
             
             <form method="POST" action="">
+                <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
+                
                 <div class="form-group">
                     <label>Email</label>
                     <div class="input-group">
                         <i class="fas fa-envelope"></i>
-                        <input type="email" name="email" required placeholder="admin@cutsstyles.com">
+                        <input type="email" name="email" required 
+                               value="<?php echo htmlspecialchars($email); ?>"
+                               placeholder="admin@cutsstyles.com">
                     </div>
                 </div>
                 
@@ -197,9 +244,9 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
             
             <div class="demo-users">
                 <strong>Usuarios de prueba:</strong><br>
-                Admin: admin@cutsstyles.com / Admin123<br>
-                Cliente: cliente@test.com / cliente123<br>
-                Barbero: barbero@test.com / barbero123
+                👑 Admin: admin@cutsstyles.com / Admin123<br>
+                👤 Cliente: cliente@test.com / cliente123<br>
+                ✂️ Barbero: barbero@test.com / barbero123
             </div>
         </div>
     </div>

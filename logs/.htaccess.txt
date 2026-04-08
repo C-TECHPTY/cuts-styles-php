@@ -1,0 +1,11 @@
+# .htaccess - Protección de la carpeta logs
+# Denegar acceso a todos los archivos desde el navegador
+
+Deny from all
+
+# También se puede usar:
+# Order allow,deny
+# Deny from all
+
+# Opcional: Redirigir a página de error
+# ErrorDocument 403 "Acceso denegado"
