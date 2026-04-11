@@ -4,6 +4,7 @@ require_once 'config/config.php';
 require_once 'classes/User.php';
 require_once 'classes/Service.php';
 require_once 'classes/Rewards.php';
+require_once 'classes/ServiceChat.php';
 
 // Verificar autenticación
 if(!isset($_SESSION['user_id']) || $_SESSION['user_rol'] != 'cliente') {
@@ -16,6 +17,7 @@ $profile = $user->getProfile();
 
 $service = new Service();
 $rewards = new Rewards();
+$serviceChat = new ServiceChat();
 
 // Obtener datos del cliente
 $cliente_query = "SELECT id FROM clientes WHERE user_id = :user_id";
@@ -33,6 +35,12 @@ if($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['solicitar_servicio']) &
         setFlash('danger', 'Sesion invalida. Intenta nuevamente.');
         redirect('cliente.php');
     }
+
+    if($serviceChat->isClientRestrictedByUserId((int) $_SESSION['user_id'])) {
+        setFlash('danger', 'Tu cuenta tiene una restriccion temporal y no puede solicitar nuevos servicios por ahora.');
+        redirect('cliente.php');
+    }
+
     $tipo = $_POST['servicio_tipo'];
     $notas = $_POST['servicio_notas'];
     $horarios = $_POST['horario'] ?? [];
@@ -43,6 +51,24 @@ if($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['solicitar_servicio']) &
     } else {
         setFlash('danger', '❌ Error al solicitar el servicio');
     }
+    redirect('cliente.php');
+}
+
+if($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['cancelar_servicio']) && $cliente_id) {
+    try {
+        verificarCSRFToken($_POST['csrf_token'] ?? null);
+    } catch (Exception $e) {
+        setFlash('danger', 'Sesion invalida. Intenta nuevamente.');
+        redirect('cliente.php');
+    }
+
+    $servicioId = (int) ($_POST['servicio_id'] ?? 0);
+    $motivo = trim((string) ($_POST['motivo_cancelacion'] ?? ''));
+    $resultado = $service->cancelarServicio($servicioId, (int) $cliente_id, $motivo);
+    setFlash(
+        $resultado ? 'success' : 'danger',
+        $resultado ? 'Servicio cancelado correctamente.' : 'No fue posible cancelar el servicio.'
+    );
     redirect('cliente.php');
 }
 
@@ -182,6 +208,8 @@ if($cliente_id) {
         .btn-primary:hover { background: #1a252f; transform: translateY(-2px); }
         .btn-success { background: var(--success); color: white; }
         .btn-success:hover { background: #219653; transform: translateY(-2px); }
+        .btn-danger { background: #E74C3C; color: white; }
+        .btn-danger:hover { background: #C0392B; transform: translateY(-2px); }
         .btn-sm { padding: 8px 16px; font-size: 14px; }
         .stats-grid {
             display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -457,7 +485,15 @@ if($cliente_id) {
                                 <td><?php echo $servicio['barbero_nombre'] ?? 'Pendiente'; ?></td>
                                 <td><?php echo date('d/m/Y H:i', strtotime($servicio['fecha_solicitud'])); ?></td>
                                 <td><span class="badge badge-<?php echo $servicio['estado']; ?>"><?php echo ucfirst($servicio['estado']); ?></span></td>
-                                <td><button class="btn btn-primary btn-sm" onclick="verDetalles(<?php echo $servicio['id']; ?>)">Ver</button></td>
+                                <td>
+                                    <button class="btn btn-primary btn-sm" onclick="verDetalles(<?php echo $servicio['id']; ?>)">Ver</button>
+                                    <?php if(in_array($servicio['estado'], ['aceptado', 'en_proceso'], true) && !empty($servicio['barbero_nombre'])): ?>
+                                        <a class="btn btn-success btn-sm" href="chat_servicio.php?servicio_id=<?php echo $servicio['id']; ?>">Chat</a>
+                                    <?php endif; ?>
+                                    <?php if(in_array($servicio['estado'], ['pendiente', 'aceptado'], true)): ?>
+                                        <button class="btn btn-danger btn-sm" onclick="mostrarCancelar(<?php echo $servicio['id']; ?>)">Cancelar</button>
+                                    <?php endif; ?>
+                                </td>
                             </tr>
                             <?php endforeach; ?>
                             <?php if(empty($servicios_activos)): ?>
@@ -572,6 +608,29 @@ if($cliente_id) {
         </div>
     </div>
 
+    <div id="cancelar-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Cancelar Servicio</h3>
+                <button class="btn" onclick="cerrarModal('cancelar-modal')">&times;</button>
+            </div>
+            <form method="POST">
+                <?php echo csrf_field(); ?>
+                <div class="modal-body">
+                    <input type="hidden" name="servicio_id" id="cancelar-servicio-id">
+                    <div class="form-group">
+                        <label>Motivo de cancelacion</label>
+                        <textarea name="motivo_cancelacion" rows="3" placeholder="Opcional. Ej: ya no puedo asistir"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn" onclick="cerrarModal('cancelar-modal')">Volver</button>
+                    <button type="submit" name="cancelar_servicio" class="btn btn-danger">Confirmar Cancelacion</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
         // Navegación
         document.querySelectorAll('.nav-item').forEach(item => {
@@ -603,6 +662,11 @@ if($cliente_id) {
                 .catch(error => {
                     body.innerHTML = '<div style="text-align:center; padding:20px; color:red;">Error al cargar los detalles</div>';
                 });
+        }
+
+        function mostrarCancelar(servicioId) {
+            document.getElementById('cancelar-servicio-id').value = servicioId;
+            document.getElementById('cancelar-modal').style.display = 'flex';
         }
         
         // Canjear recompensa

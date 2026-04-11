@@ -489,6 +489,9 @@ if($barbero_id) {
                                 <td><span class="badge badge-<?php echo $servicio['estado']; ?>"><?php echo ucfirst($servicio['estado']); ?></span></td>
                                 <td><?php echo date('d/m/Y H:i', strtotime($servicio['fecha_aceptacion'])); ?></td>
                                 <td>
+                                    <a class="btn btn-success btn-sm" href="chat_servicio.php?servicio_id=<?php echo $servicio['id']; ?>">
+                                        <i class="fas fa-comments"></i> Chat
+                                    </a>
                                     <button class="btn btn-warning btn-sm" onclick="mostrarFinalizar(<?php echo $servicio['id']; ?>)">
                                         <i class="fas fa-check-double"></i> Finalizar
                                     </button>

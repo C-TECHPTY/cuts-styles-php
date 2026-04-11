@@ -2,6 +2,7 @@
 // classes/Service.php
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/config.php';
+require_once __DIR__ . '/ServiceChat.php';
 
 class Service {
     public $conn;
@@ -50,7 +51,18 @@ class Service {
         $stmt->bindParam(':tiempo_estimado', $tiempo_estimado);
         $stmt->bindParam(':notas', $notas);
 
-        return $stmt->execute() && $stmt->rowCount() > 0;
+        if (!$stmt->execute() || $stmt->rowCount() === 0) {
+            return false;
+        }
+
+        try {
+            $chat = new ServiceChat();
+            $chat->openChatForService((int) $servicio_id);
+        } catch (Throwable $e) {
+            logError('No se pudo abrir el chat del servicio: ' . $e->getMessage(), __FILE__, __LINE__);
+        }
+
+        return true;
     }
 
     public function completarServicio($servicio_id, $duracion_real, $notas) {
@@ -77,6 +89,12 @@ class Service {
             }
 
             $this->actualizarPuntos($servicio_id);
+            try {
+                $chat = new ServiceChat();
+                $chat->closeChatForService((int) $servicio_id, 'service_completed');
+            } catch (Throwable $e) {
+                logError('No se pudo cerrar el chat del servicio: ' . $e->getMessage(), __FILE__, __LINE__);
+            }
             $this->conn->commit();
             return true;
         } catch (Throwable $e) {
@@ -110,6 +128,49 @@ class Service {
         $stmt->bindParam(':cliente_id', $cliente_id);
         $stmt->execute();
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function cancelarServicio($servicio_id, $cliente_id, $motivo = '') {
+        try {
+            $this->conn->beginTransaction();
+
+            $query = "UPDATE servicios
+                      SET estado = 'cancelado',
+                          fecha_fin = NOW(),
+                          notas = CONCAT(COALESCE(notas, ''), :salto, :motivo)
+                      WHERE id = :servicio_id
+                        AND cliente_id = :cliente_id
+                        AND estado IN ('pendiente', 'aceptado')";
+            $stmt = $this->conn->prepare($query);
+            $salto = trim((string) $motivo) !== '' ? PHP_EOL : '';
+            $motivoTexto = trim((string) $motivo) !== '' ? 'Cancelado por cliente: ' . trim((string) $motivo) : '';
+            $stmt->bindParam(':salto', $salto);
+            $stmt->bindParam(':motivo', $motivoTexto);
+            $stmt->bindParam(':servicio_id', $servicio_id);
+            $stmt->bindParam(':cliente_id', $cliente_id);
+            $stmt->execute();
+
+            if ($stmt->rowCount() === 0) {
+                $this->conn->rollBack();
+                return false;
+            }
+
+            try {
+                $chat = new ServiceChat();
+                $chat->registerClientCancellation((int) $servicio_id, (int) $cliente_id, $motivoTexto);
+            } catch (Throwable $e) {
+                logError('No se pudo registrar la cancelacion en comportamiento/chat: ' . $e->getMessage(), __FILE__, __LINE__);
+            }
+
+            $this->conn->commit();
+            return true;
+        } catch (Throwable $e) {
+            if ($this->conn->inTransaction()) {
+                $this->conn->rollBack();
+            }
+            logError('Error cancelando servicio: ' . $e->getMessage(), __FILE__, __LINE__);
+            return false;
+        }
     }
 
     private function actualizarPuntos($servicio_id) {

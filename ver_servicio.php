@@ -15,8 +15,8 @@ try {
     $conn = $database->getConnection();
     
     $query = "SELECT s.*, 
-              c.id as cliente_id, cu.nombre as cliente_nombre, cu.telefono as cliente_telefono,
-              b.id as barbero_id, bu.nombre as barbero_nombre, bu.telefono as barbero_telefono
+              c.id as cliente_id, c.user_id as cliente_user_id, cu.nombre as cliente_nombre, cu.telefono as cliente_telefono,
+              b.id as barbero_id, b.user_id as barbero_user_id, bu.nombre as barbero_nombre, bu.telefono as barbero_telefono
               FROM servicios s
               LEFT JOIN clientes c ON s.cliente_id = c.id
               LEFT JOIN users cu ON c.user_id = cu.id
@@ -30,6 +30,23 @@ try {
     
     if(!$servicio) {
         echo "<p>Servicio no encontrado</p>";
+        exit;
+    }
+    $sessionRole = $_SESSION['user_rol'] ?? null;
+    $sessionUserId = (int) ($_SESSION['user_id'] ?? 0);
+    $allowed = false;
+
+    if ($sessionRole === 'admin') {
+        $allowed = true;
+    } elseif ($sessionRole === 'cliente' && (int) ($servicio['cliente_user_id'] ?? 0) === $sessionUserId) {
+        $allowed = true;
+    } elseif ($sessionRole === 'barbero' && (int) ($servicio['barbero_user_id'] ?? 0) === $sessionUserId) {
+        $allowed = true;
+    }
+
+    if (!$allowed) {
+        http_response_code(403);
+        echo "<p>No tienes permiso para ver este servicio</p>";
         exit;
     }
     ?>
@@ -177,6 +194,16 @@ try {
         <div class="detalle-row">
             <div class="detalle-label">Calificación:</div>
             <div class="detalle-value"><?php echo str_repeat('⭐', $servicio['calificacion']); ?></div>
+        </div>
+        <?php endif; ?>
+        <?php if(in_array($servicio['estado'], ['aceptado', 'en_proceso'], true) && !empty($servicio['barbero_id'])): ?>
+        <div class="detalle-row">
+            <div class="detalle-label">Chat:</div>
+            <div class="detalle-value">
+                <a href="chat_servicio.php?servicio_id=<?php echo (int) $servicio['id']; ?>" style="display:inline-block; padding:8px 14px; background:#2C3E50; color:#fff; border-radius:8px; text-decoration:none;">
+                    Abrir chat del servicio
+                </a>
+            </div>
         </div>
         <?php endif; ?>
     </div>
