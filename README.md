@@ -1,43 +1,42 @@
-# 💈 Cuts & Styles - Barbería a Domicilio
+# 💈 CUTS - Barbería a Domicilio
 
-[![PHP Version](https://img.shields.io/badge/PHP-7.4%2B-blue.svg)](https://php.net)
-[![MySQL](https://img.shields.io/badge/MySQL-5.7%2B-orange.svg)](https://mysql.com)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![PHP](https://img.shields.io/badge/PHP-8.2-777BB4)
+![Laravel](https://img.shields.io/badge/Laravel-11.x-FF2D20)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-## 📌 Descripción
+## 📌 Sobre el Proyecto
 
-**Cuts & Styles** es una plataforma completa de barbería a domicilio estilo **Uber**, que conecta clientes con barberos profesionales verificados. El sistema incluye panel de administración, gestión de servicios, tienda de productos, sistema de puntos y recompensas.
+**CUTS** es una plataforma tipo **Uber** para solicitar barberos profesionales a domicilio en **Panamá**. Conecta clientes con barberos verificados en minutos.
 
-### 🎯 Características Principales
+### 🎯 Visión
+Convertirse en la plataforma líder de barbería on-demand en Latinoamérica.
 
-- ✅ **Múltiples roles**: Cliente, Barbero, Administrador
-- ✅ **Servicios a domicilio**: Solicita barbero en minutos
-- ✅ **Barberos verificados**: Sistema de documentación y aprobación
-- ✅ **Sistema de puntos**: Acumula puntos por cada servicio
-- ✅ **Tienda integrada**: Productos profesionales con múltiples imágenes
-- ✅ **Carrito de compras**: Persistente con sesión
-- ✅ **Dashboard administrador**: Estadísticas, gráficos, gestión completa
-- ✅ **Galería de imágenes**: Lightbox para productos
-- ✅ **Sistema de recompensas**: Canjea puntos por productos/servicios
+### ✨ Características Actuales (MVP)
 
-## 🚀 Demo Rápida
+- ✅ Autenticación de usuarios (cliente/barbero/admin)
+- ✅ Registro y perfiles
+- ✅ Solicitud de servicios a domicilio
+- ✅ Sistema de puntos y recompensas
+- ✅ Panel de administración
+- ✅ Gestión de productos y tienda
 
-| Rol | Email | Contraseña |
-|-----|-------|-------------|
-| 👑 Administrador | admin@cutsstyles.com | Admin123 |
-| 👤 Cliente | cliente@test.com | cliente123 |
-| ✂️ Barbero | barbero@test.com | barbero123 |
+### 🚀 Próximas Características
 
-## 📋 Requisitos del Sistema
+- ⏳ API REST completa
+- ⏳ App móvil (Flutter)
+- ⏳ Geolocalización en tiempo real
+- ⏳ Pagos integrados (Yappy/Stripe)
+- ⏳ Notificaciones push
 
-- PHP 7.4 o superior
-- MySQL 5.7 o superior
-- XAMPP / WAMP / LAMP
-- Extensiones: PDO, MySQLi, GD, Fileinfo
+## 🛠️ Tecnologías
 
-## 🔧 Instalación Local
+| Capa | Tecnología |
+|------|------------|
+| Backend | PHP 8.2, Laravel 11 |
+| Base de Datos | MySQL 8.0 |
+| Frontend | Blade, TailwindCSS, JavaScript |
+| API | Laravel Sanctum |
+| App Móvil | Flutter (próximamente) |
 
-### 1. Clonar el repositorio
-```bash
-git clone https://github.com/C-TECHPTY/cuts-styles-php.git
-cd cuts-styles-php
+## 📁 Estructura del Proyecto (v2 - Laravel)

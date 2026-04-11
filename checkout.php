@@ -3,145 +3,151 @@
 require_once 'config/config.php';
 require_once 'classes/Product.php';
 
-// Inicializar sesión
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Verificar autenticación
-if(!isset($_SESSION['user_id'])) {
-    $_SESSION['flash'] = ['type' => 'danger', 'message' => 'Debes iniciar sesión para realizar una compra'];
-    header("Location: login.php");
+if (!isset($_SESSION['user_id'])) {
+    $_SESSION['flash'] = ['type' => 'danger', 'message' => 'Debes iniciar sesion para realizar una compra'];
+    header('Location: login.php');
     exit();
 }
 
 $productClass = new Product();
 
-// Procesar compra directa (Comprar Ahora)
-if(isset($_GET['buy_now'])) {
-    // Limpiar carrito actual
+if (isset($_GET['buy_now'])) {
     $_SESSION['carrito'] = [];
-    // Agregar solo el producto seleccionado
-    $producto_id = $_GET['buy_now'];
-    $cantidad = $_GET['cantidad'] ?? 1;
+    $producto_id = (int) $_GET['buy_now'];
+    $cantidad = max(1, (int) ($_GET['cantidad'] ?? 1));
     $_SESSION['carrito'][$producto_id] = $cantidad;
 }
 
-// Obtener ID del cliente
 $query = "SELECT id FROM clientes WHERE user_id = :user_id";
 $stmt = $productClass->conn->prepare($query);
-$stmt->bindParam(":user_id", $_SESSION['user_id']);
+$stmt->bindParam(':user_id', $_SESSION['user_id']);
 $stmt->execute();
 $cliente = $stmt->fetch(PDO::FETCH_ASSOC);
 
-if(!$cliente) {
-    // Crear cliente si no existe
+if (!$cliente) {
     $insert = "INSERT INTO clientes (user_id) VALUES (:user_id)";
     $stmt = $productClass->conn->prepare($insert);
-    $stmt->bindParam(":user_id", $_SESSION['user_id']);
+    $stmt->bindParam(':user_id', $_SESSION['user_id']);
     $stmt->execute();
-    $cliente_id = $productClass->conn->lastInsertId();
+    $cliente_id = (int) $productClass->conn->lastInsertId();
 } else {
-    $cliente_id = $cliente['id'];
+    $cliente_id = (int) $cliente['id'];
 }
 
-// Verificar si hay productos en el carrito
-if(empty($_SESSION['carrito'])) {
-    $_SESSION['flash'] = ['type' => 'warning', 'message' => 'Tu carrito está vacío'];
-    header("Location: productos.php");
+if (empty($_SESSION['carrito'])) {
+    $_SESSION['flash'] = ['type' => 'warning', 'message' => 'Tu carrito esta vacio'];
+    header('Location: productos.php');
     exit();
 }
 
-// Obtener productos del carrito
 $carrito_items = [];
-$total = 0;
-
+$total = 0.0;
 $ids = array_keys($_SESSION['carrito']);
-if(!empty($ids)) {
+
+if (!empty($ids)) {
     $placeholders = implode(',', array_fill(0, count($ids), '?'));
     $query = "SELECT * FROM productos WHERE id IN ($placeholders) AND estado = 'activo'";
     $stmt = $productClass->conn->prepare($query);
-    foreach($ids as $key => $id) {
-        $stmt->bindValue($key+1, $id);
+    foreach ($ids as $key => $id) {
+        $stmt->bindValue($key + 1, $id, PDO::PARAM_INT);
     }
     $stmt->execute();
     $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    foreach($productos as $prod) {
-        $cantidad = $_SESSION['carrito'][$prod['id']];
+
+    foreach ($productos as $prod) {
+        $cantidad = (int) $_SESSION['carrito'][$prod['id']];
         $precio_final = $productClass->getPrecioFinal($prod);
         $subtotal = $precio_final * $cantidad;
         $total += $subtotal;
-        
+
         $carrito_items[] = [
-            'id' => $prod['id'],
+            'id' => (int) $prod['id'],
             'nombre' => $prod['nombre'],
-            'precio' => $precio_final,
+            'precio' => (float) $precio_final,
             'cantidad' => $cantidad,
-            'subtotal' => $subtotal
+            'subtotal' => (float) $subtotal,
         ];
     }
 }
 
-// Procesar pedido
-if($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['confirmar_pedido'])) {
-    $direccion = $_POST['direccion'];
-    $metodo_pago = $_POST['metodo_pago'];
-    
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_pedido'])) {
     try {
-        // Iniciar transacción
+        verificarCSRFToken($_POST['csrf_token'] ?? null);
+    } catch (Exception $e) {
+        $_SESSION['flash'] = ['type' => 'danger', 'message' => 'Sesion invalida. Intenta nuevamente.'];
+        header('Location: checkout.php');
+        exit();
+    }
+
+    $direccion = trim((string) ($_POST['direccion'] ?? ''));
+    $metodo_pago = $_POST['metodo_pago'] ?? 'mercadopago';
+    $metodos_validos = ['mercadopago', 'efectivo', 'transferencia'];
+
+    if ($direccion === '' || !in_array($metodo_pago, $metodos_validos, true)) {
+        $_SESSION['flash'] = ['type' => 'danger', 'message' => 'Datos de pedido invalidos'];
+        header('Location: checkout.php');
+        exit();
+    }
+
+    try {
         $productClass->conn->beginTransaction();
-        
-        // Crear pedido
-        $query = "INSERT INTO pedidos (cliente_id, total, direccion_entrega, metodo_pago, estado) 
+
+        $query = "INSERT INTO pedidos (cliente_id, total, direccion_entrega, metodo_pago, estado)
                   VALUES (:cliente_id, :total, :direccion, :metodo, 'pendiente')";
         $stmt = $productClass->conn->prepare($query);
-        $stmt->bindParam(":cliente_id", $cliente_id);
-        $stmt->bindParam(":total", $total);
-        $stmt->bindParam(":direccion", $direccion);
-        $stmt->bindParam(":metodo", $metodo_pago);
+        $stmt->bindParam(':cliente_id', $cliente_id);
+        $stmt->bindParam(':total', $total);
+        $stmt->bindParam(':direccion', $direccion);
+        $stmt->bindParam(':metodo', $metodo_pago);
         $stmt->execute();
-        
-        $pedido_id = $productClass->conn->lastInsertId();
-        
-        // Guardar detalles del pedido
-        foreach($carrito_items as $item) {
-            $query = "INSERT INTO pedido_detalles (pedido_id, producto_id, cantidad, precio_unitario) 
+
+        $pedido_id = (int) $productClass->conn->lastInsertId();
+
+        foreach ($carrito_items as $item) {
+            $query = "INSERT INTO pedido_detalles (pedido_id, producto_id, cantidad, precio_unitario)
                       VALUES (:pedido_id, :producto_id, :cantidad, :precio)";
             $stmt = $productClass->conn->prepare($query);
-            $stmt->bindParam(":pedido_id", $pedido_id);
-            $stmt->bindParam(":producto_id", $item['id']);
-            $stmt->bindParam(":cantidad", $item['cantidad']);
-            $stmt->bindParam(":precio", $item['precio']);
+            $stmt->bindParam(':pedido_id', $pedido_id);
+            $stmt->bindParam(':producto_id', $item['id']);
+            $stmt->bindParam(':cantidad', $item['cantidad']);
+            $stmt->bindParam(':precio', $item['precio']);
             $stmt->execute();
-            
-            // Actualizar stock
-            $productClass->updateStock($item['id'], $item['cantidad']);
+
+            if (!$productClass->updateStock($item['id'], $item['cantidad'])) {
+                throw new RuntimeException('Stock insuficiente');
+            }
         }
-        
-        // Confirmar transacción
+
         $productClass->conn->commit();
-        
-        // Vaciar carrito
+
+        if ($metodo_pago === 'mercadopago') {
+            $_SESSION['flash'] = ['type' => 'success', 'message' => 'Pedido creado. Continua con el pago en Mercado Pago.'];
+            header('Location: mercadopago_pago.php?pedido_id=' . $pedido_id);
+            exit();
+        }
+
         $_SESSION['carrito'] = [];
-        
-        $_SESSION['flash'] = ['type' => 'success', 'message' => '✅ Pedido realizado exitosamente. Gracias por tu compra!'];
-        header("Location: cliente.php");
+        $_SESSION['flash'] = ['type' => 'success', 'message' => 'Pedido realizado exitosamente. Gracias por tu compra.'];
+        header('Location: cliente.php');
         exit();
-        
-    } catch(PDOException $e) {
-        // Revertir transacción en caso de error
-        $productClass->conn->rollBack();
-        $_SESSION['flash'] = ['type' => 'danger', 'message' => '❌ Error al procesar el pedido: ' . $e->getMessage()];
-        header("Location: checkout.php");
+    } catch (Throwable $e) {
+        if ($productClass->conn->inTransaction()) {
+            $productClass->conn->rollBack();
+        }
+        logError('Error al procesar pedido: ' . $e->getMessage(), __FILE__, __LINE__);
+        $_SESSION['flash'] = ['type' => 'danger', 'message' => 'Error al procesar el pedido. Verifica el stock e intenta nuevamente.'];
+        header('Location: checkout.php');
         exit();
     }
 }
 
-// Obtener perfil del usuario
 $query = "SELECT * FROM users WHERE id = :id";
 $stmt = $productClass->conn->prepare($query);
-$stmt->bindParam(":id", $_SESSION['user_id']);
+$stmt->bindParam(':id', $_SESSION['user_id']);
 $stmt->execute();
 $user = $stmt->fetch(PDO::FETCH_ASSOC);
 ?>
@@ -276,7 +282,6 @@ $user = $stmt->fetch(PDO::FETCH_ASSOC);
             font-size: 2rem;
             margin-bottom: 0.5rem;
         }
-        .payment-option i.fa-mercadopago { color: #009ee3; }
         .payment-option i.fa-money-bill-wave { color: #27ae60; }
         .payment-option i.fa-university { color: #3498db; }
         .payment-option span {
@@ -364,7 +369,7 @@ $user = $stmt->fetch(PDO::FETCH_ASSOC);
             <div class="card-header">
                 <h1><i class="fas fa-clipboard-list"></i> Finalizar Pedido</h1>
             </div>
-            
+
             <?php if(isset($_SESSION['flash'])): ?>
                 <div class="alert alert-<?php echo $_SESSION['flash']['type']; ?>" style="margin: 1rem;">
                     <i class="fas fa-<?php echo $_SESSION['flash']['type'] == 'success' ? 'check-circle' : ($_SESSION['flash']['type'] == 'danger' ? 'exclamation-circle' : 'info-circle'); ?>"></i>
@@ -372,7 +377,7 @@ $user = $stmt->fetch(PDO::FETCH_ASSOC);
                 </div>
                 <?php unset($_SESSION['flash']); ?>
             <?php endif; ?>
-            
+
             <div class="cart-items">
                 <h3 style="margin-bottom: 1rem;">Resumen de tu pedido</h3>
                 <?php foreach($carrito_items as $item): ?>
@@ -382,23 +387,24 @@ $user = $stmt->fetch(PDO::FETCH_ASSOC);
                 </div>
                 <?php endforeach; ?>
             </div>
-            
+
             <div class="total">
                 <strong>Total a pagar:</strong>
                 <span class="total-amount">$<?php echo number_format($total, 2); ?></span>
             </div>
-            
+
             <form method="POST" class="form-container">
+                <?php echo csrf_field(); ?>
                 <div class="form-group">
-                    <label><i class="fas fa-map-marker-alt"></i> Dirección de Entrega</label>
-                    <textarea name="direccion" rows="3" required placeholder="Calle, número, colonia, ciudad, código postal"><?php echo htmlspecialchars($user['direccion'] ?? ''); ?></textarea>
+                    <label><i class="fas fa-map-marker-alt"></i> Direccion de Entrega</label>
+                    <textarea name="direccion" rows="3" required placeholder="Calle, numero, colonia, ciudad, codigo postal"><?php echo htmlspecialchars($user['direccion'] ?? ''); ?></textarea>
                 </div>
-                
+
                 <div class="form-group">
-                    <label><i class="fas fa-credit-card"></i> Método de Pago</label>
+                    <label><i class="fas fa-credit-card"></i> Metodo de Pago</label>
                     <div class="payment-methods">
                         <div class="payment-option" data-metodo="mercadopago">
-                            <i class="fab fa-mercadopago"></i>
+                            <i class="fas fa-wallet"></i>
                             <span>Mercado Pago</span>
                         </div>
                         <div class="payment-option" data-metodo="efectivo">
@@ -412,12 +418,12 @@ $user = $stmt->fetch(PDO::FETCH_ASSOC);
                     </div>
                     <input type="hidden" name="metodo_pago" id="metodo_pago" value="mercadopago">
                 </div>
-                
+
                 <button type="submit" name="confirmar_pedido" class="btn" id="btn-confirmar">
                     <i class="fas fa-check-circle"></i> Confirmar Pedido
                 </button>
             </form>
-            
+
             <div style="text-align: center; padding-bottom: 1.5rem;">
                 <a href="carrito.php" class="back-link">
                     <i class="fas fa-arrow-left"></i> Volver al carrito
@@ -427,27 +433,25 @@ $user = $stmt->fetch(PDO::FETCH_ASSOC);
     </div>
 
     <script>
-        // Selección de método de pago
         document.querySelectorAll('.payment-option').forEach(option => {
             option.addEventListener('click', function() {
                 document.querySelectorAll('.payment-option').forEach(opt => opt.classList.remove('selected'));
                 this.classList.add('selected');
                 const metodo = this.getAttribute('data-metodo');
                 document.getElementById('metodo_pago').value = metodo;
-                
+
                 const btn = document.getElementById('btn-confirmar');
-                if(metodo === 'mercadopago') {
-                    btn.innerHTML = '<i class="fab fa-mercadopago"></i> Pagar con Mercado Pago';
-                } else if(metodo === 'efectivo') {
+                if (metodo === 'mercadopago') {
+                    btn.innerHTML = '<i class="fas fa-wallet"></i> Pagar con Mercado Pago';
+                } else if (metodo === 'efectivo') {
                     btn.innerHTML = '<i class="fas fa-money-bill-wave"></i> Confirmar pedido (Pagar al recibir)';
                 } else {
                     btn.innerHTML = '<i class="fas fa-university"></i> Confirmar pedido (Transferencia)';
                 }
             });
         });
-        
-        // Seleccionar primera opción por defecto
-        if(document.querySelector('.payment-option')) {
+
+        if (document.querySelector('.payment-option')) {
             document.querySelector('.payment-option').classList.add('selected');
         }
     </script>

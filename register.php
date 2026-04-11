@@ -65,7 +65,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             // Regenerar token CSRF
             $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
         } else {
-            throw new Exception('Error al crear la cuenta. El email puede estar en uso.');
+            throw new Exception($user->lastError ?: 'Error al crear la cuenta.');
         }
         
     } catch (Exception $e) {

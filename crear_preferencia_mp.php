@@ -1,40 +1,50 @@
 <?php
 // crear_preferencia_mp.php
 require_once 'config/config.php';
+require_once 'config/database.php';
 require_once 'config/mercadopago.php';
 
 header('Content-Type: application/json');
 
-$data = json_decode(file_get_contents('php://input'), true);
-$pedido_id = $data['pedido_id'] ?? 0;
-$total = $data['total'] ?? 0;
-$descripcion = $data['descripcion'] ?? 'Compra en Cuts & Styles';
+if (!isLoggedIn()) {
+    http_response_code(401);
+    echo json_encode(['error' => 'No autenticado']);
+    exit;
+}
 
-if(!$pedido_id || !$total) {
+$data = json_decode(file_get_contents('php://input'), true) ?: [];
+$pedido_id = (int) ($data['pedido_id'] ?? 0);
+$total = (float) ($data['total'] ?? 0);
+
+if ($pedido_id <= 0 || $total <= 0) {
+    http_response_code(422);
     echo json_encode(['error' => 'Datos incompletos']);
     exit;
 }
 
-// Obtener datos del usuario
 $database = new Database();
 $conn = $database->getConnection();
 
-$query = "SELECT u.nombre, u.email, u.telefono 
+$query = "SELECT p.id, p.total
           FROM pedidos p
           JOIN clientes c ON p.cliente_id = c.id
-          JOIN users u ON c.user_id = u.id
-          WHERE p.id = :id";
+          WHERE p.id = :id AND c.user_id = :user_id";
 $stmt = $conn->prepare($query);
-$stmt->bindParam(":id", $pedido_id);
+$stmt->bindParam(':id', $pedido_id);
+$stmt->bindParam(':user_id', $_SESSION['user_id']);
 $stmt->execute();
-$usuario = $stmt->fetch(PDO::FETCH_ASSOC);
+$pedido = $stmt->fetch(PDO::FETCH_ASSOC);
 
-// En producción, aquí se haría la integración real con la API de Mercado Pago
-// Usar curl para crear la preferencia
+if (!$pedido) {
+    http_response_code(404);
+    echo json_encode(['error' => 'Pedido no encontrado']);
+    exit;
+}
 
-// Simulación de respuesta
+$token = $_SESSION['mercadopago_tokens'][$pedido_id] ?? bin2hex(random_bytes(24));
+$_SESSION['mercadopago_tokens'][$pedido_id] = $token;
+
 echo json_encode([
     'id' => 'PREF-' . $pedido_id . '-' . time(),
-    'init_point' => BASE_URL . 'confirmar_pago.php?pedido_id=' . $pedido_id
+    'init_point' => BASE_URL . 'confirmar_pago.php?pedido_id=' . $pedido_id . '&status=approved&token=' . urlencode($token),
 ]);
-?>

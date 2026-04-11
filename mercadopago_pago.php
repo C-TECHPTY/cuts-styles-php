@@ -1,36 +1,37 @@
 <?php
 // mercadopago_pago.php
 require_once 'config/config.php';
+require_once 'config/database.php';
 require_once 'config/mercadopago.php';
 
-$pedido_id = $_GET['pedido_id'] ?? 0;
+requireLogin();
 
-if(!$pedido_id) {
+$pedido_id = (int) ($_GET['pedido_id'] ?? 0);
+if (!$pedido_id) {
     redirect('carrito.php');
 }
 
-// Obtener datos del pedido
 $database = new Database();
 $conn = $database->getConnection();
 
-$query = "SELECT p.*, u.nombre, u.email, u.telefono 
+$query = "SELECT p.*, u.nombre, u.email, u.telefono
           FROM pedidos p
           JOIN clientes c ON p.cliente_id = c.id
           JOIN users u ON c.user_id = u.id
-          WHERE p.id = :id";
+          WHERE p.id = :id AND c.user_id = :user_id";
 $stmt = $conn->prepare($query);
-$stmt->bindParam(":id", $pedido_id);
+$stmt->bindParam(':id', $pedido_id);
+$stmt->bindParam(':user_id', $_SESSION['user_id']);
 $stmt->execute();
 $pedido = $stmt->fetch(PDO::FETCH_ASSOC);
 
-if(!$pedido) {
-    redirect('carrito.php');
+if (!$pedido) {
+    setFlash('danger', 'Pedido no encontrado.');
+    redirect('cliente.php');
 }
 
-// Redirigir a Mercado Pago
-// En producción, aquí iría la integración real con la API de Mercado Pago
-
-// Simulación de redirección (en producción usar SDK de Mercado Pago)
+$paymentToken = bin2hex(random_bytes(24));
+$_SESSION['mercadopago_tokens'][$pedido_id] = $paymentToken;
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -46,13 +47,14 @@ if(!$pedido) {
             display: flex;
             align-items: center;
             justify-content: center;
+            padding: 20px;
         }
         .payment-container {
             background: white;
             border-radius: 20px;
             padding: 3rem;
             text-align: center;
-            max-width: 500px;
+            max-width: 560px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.1);
         }
         .loader {
@@ -68,6 +70,13 @@ if(!$pedido) {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        .actions {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 1.5rem;
+        }
         .btn {
             display: inline-block;
             padding: 12px 24px;
@@ -75,51 +84,32 @@ if(!$pedido) {
             color: white;
             text-decoration: none;
             border-radius: 8px;
+        }
+        .btn-secondary {
+            background: #1a1a2e;
+        }
+        .hint {
             margin-top: 1rem;
+            color: #666;
+            font-size: 0.95rem;
         }
     </style>
-    <script src="https://sdk.mercadopago.com/js/v2"></script>
 </head>
 <body>
     <div class="payment-container">
         <div class="loader"></div>
         <h2>Procesando tu pago...</h2>
-        <p>Por favor espera mientras te redirigimos a Mercado Pago</p>
-        <div id="wallet_container"></div>
-        <a href="cliente.php" class="btn">Volver al dashboard</a>
-    </div>
+        <p>Esta integracion esta en modo demo. El pedido <strong>#<?php echo $pedido_id; ?></strong> quedo creado por <strong>$<?php echo number_format((float) $pedido['total'], 2); ?></strong>.</p>
+        <p class="hint">Cuando integres Mercado Pago real, este punto debe crear la preferencia en backend y confirmar por webhook.</p>
 
-    <script>
-        // En producción, usar el SDK de Mercado Pago
-        const mp = new MercadoPago('<?php echo MP_PUBLIC_KEY; ?>', {
-            locale: 'es-MX'
-        });
-        
-        // Crear preferencia de pago (en producción, esto se hace desde el backend)
-        fetch('crear_preferencia_mp.php', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                pedido_id: <?php echo $pedido_id; ?>,
-                total: <?php echo $pedido['total']; ?>,
-                descripcion: 'Pedido #<?php echo $pedido_id; ?>'
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if(data.id) {
-                mp.bricks().create("wallet", "wallet_container", {
-                    initialization: { preferenceId: data.id },
-                    customization: { texts: { valueProp: 'smart_option' } }
-                });
-            } else {
-                window.location.href = 'cliente.php';
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            window.location.href = 'cliente.php';
-        });
-    </script>
+        <div class="actions">
+            <a class="btn" href="<?php echo BASE_URL; ?>confirmar_pago.php?pedido_id=<?php echo $pedido_id; ?>&status=approved&token=<?php echo urlencode($paymentToken); ?>">Simular pago aprobado</a>
+            <a class="btn btn-secondary" href="<?php echo BASE_URL; ?>confirmar_pago.php?pedido_id=<?php echo $pedido_id; ?>&status=pending&token=<?php echo urlencode($paymentToken); ?>">Simular pago pendiente</a>
+        </div>
+
+        <div class="actions">
+            <a href="cliente.php" class="btn btn-secondary">Volver al dashboard</a>
+        </div>
+    </div>
 </body>
 </html>

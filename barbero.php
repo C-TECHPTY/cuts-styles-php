@@ -27,6 +27,12 @@ $verificacion_status = $barbero['verificacion_status'] ?? 'pendiente';
 
 // Cambiar disponibilidad
 if(isset($_POST['toggle_disponible'])) {
+    try {
+        verificarCSRFToken($_POST['csrf_token'] ?? null);
+    } catch (Exception $e) {
+        setFlash('danger', 'Sesion invalida. Intenta nuevamente.');
+        redirect('barbero.php');
+    }
     if($barbero_id) {
         $new_status = $_POST['is_available'] == 1 ? 0 : 1;
         $update = "UPDATE barberos SET is_available = :status WHERE id = :id";
@@ -40,6 +46,12 @@ if(isset($_POST['toggle_disponible'])) {
 
 // Aceptar servicio
 if(isset($_POST['aceptar_servicio']) && $barbero_id) {
+    try {
+        verificarCSRFToken($_POST['csrf_token'] ?? null);
+    } catch (Exception $e) {
+        setFlash('danger', 'Sesion invalida. Intenta nuevamente.');
+        redirect('barbero.php');
+    }
     $resultado = $service->aceptarServicio(
         $_POST['servicio_id'],
         $barbero_id,
@@ -53,6 +65,12 @@ if(isset($_POST['aceptar_servicio']) && $barbero_id) {
 
 // Finalizar servicio
 if(isset($_POST['finalizar_servicio']) && $barbero_id) {
+    try {
+        verificarCSRFToken($_POST['csrf_token'] ?? null);
+    } catch (Exception $e) {
+        setFlash('danger', 'Sesion invalida. Intenta nuevamente.');
+        redirect('barbero.php');
+    }
     $resultado = $service->completarServicio(
         $_POST['servicio_id'],
         $_POST['duracion_real'],
@@ -346,6 +364,7 @@ if($barbero_id) {
                 <h2 id="section-title">Dashboard Barbero</h2>
                 <div style="display: flex; gap: 10px;">
                     <form method="POST" style="display: inline;">
+                        <?php echo csrf_field(); ?>
                         <input type="hidden" name="is_available" value="<?php echo $barbero['is_available'] ?? 0; ?>">
                         <div class="status-toggle">
                             <span class="status-label"><?php echo ($barbero['is_available'] ?? 0) ? 'Disponible' : 'No disponible'; ?></span>
@@ -512,6 +531,7 @@ if($barbero_id) {
                     <div class="table-header"><h3>Mi Perfil Profesional</h3></div>
                     <div style="padding: 20px;">
                         <form method="POST" action="actualizar_perfil_barbero.php">
+                            <?php echo csrf_field(); ?>
                             <div class="form-group">
                                 <label>Email</label>
                                 <input type="email" value="<?php echo htmlspecialchars($_SESSION['user_email']); ?>" readonly style="width:100%; padding:10px; border:1px solid #ddd; border-radius:5px;">
@@ -563,6 +583,7 @@ if($barbero_id) {
                 <button class="btn" onclick="cerrarModal('aceptar-modal')">&times;</button>
             </div>
             <form method="POST">
+                <?php echo csrf_field(); ?>
                 <div class="modal-body">
                     <input type="hidden" name="servicio_id" id="aceptar-servicio-id">
                     <div class="form-group">
@@ -590,6 +611,7 @@ if($barbero_id) {
                 <button class="btn" onclick="cerrarModal('finalizar-modal')">&times;</button>
             </div>
             <form method="POST">
+                <?php echo csrf_field(); ?>
                 <div class="modal-body">
                     <input type="hidden" name="servicio_id" id="finalizar-servicio-id">
                     <div class="form-group">
@@ -626,9 +648,9 @@ if($barbero_id) {
         // Navegación entre secciones
         document.querySelectorAll('.nav-item').forEach(item => {
             item.addEventListener('click', function(e) {
-                e.preventDefault();
                 const section = this.getAttribute('data-section');
                 if(section) {
+                    e.preventDefault();
                     document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
                     this.classList.add('active');
                     document.querySelectorAll('.section-content').forEach(content => content.classList.remove('active'));

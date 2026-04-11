@@ -5,6 +5,12 @@ require_once __DIR__ . '/../classes/Product.php';
 
 header('Content-Type: application/json');
 
+if (!isLoggedIn()) {
+    http_response_code(401);
+    echo json_encode(['error' => 'No autenticado']);
+    exit;
+}
+
 $id = $_GET['id'] ?? 0;
 
 if($id) {

@@ -21,8 +21,92 @@ $productClass = new Product();
 // PROCESAR ACCIONES POST
 // ============================================
 if($_SERVER['REQUEST_METHOD'] == 'POST') {
+    try {
+        verificarCSRFToken($_POST['csrf_token'] ?? null);
+    } catch (Exception $e) {
+        $_SESSION['flash'] = ['type' => 'danger', 'message' => 'Sesion invalida. Intenta nuevamente.'];
+        header("Location: " . BASE_URL . "admin/dashboard.php");
+        exit();
+    }
     
     // Guardar producto (con múltiples imágenes)
+    if(isset($_POST['crear_usuario_admin'])) {
+        $rol = $_POST['rol'] ?? 'cliente';
+        $nombre = trim((string) ($_POST['nombre'] ?? ''));
+        $email = sanitizarEmail($_POST['email'] ?? '');
+        $telefono = trim((string) ($_POST['telefono'] ?? ''));
+        $password = (string) ($_POST['password'] ?? '');
+        $direccion = trim((string) ($_POST['direccion'] ?? ''));
+        $especialidad = trim((string) ($_POST['especialidad'] ?? ''));
+        $experiencia = (int) ($_POST['experiencia'] ?? 0);
+        $descripcion = trim((string) ($_POST['descripcion'] ?? ''));
+        $tarifa_hora = $_POST['tarifa_hora'] !== '' ? (float) $_POST['tarifa_hora'] : null;
+        $verificacion_status = $_POST['verificacion_status'] ?? 'pendiente';
+        $is_available = isset($_POST['is_available']) ? 1 : 0;
+
+        if (!in_array($rol, ['cliente', 'barbero'], true) || $nombre === '' || !validarEmail($email) || strlen($password) < 6) {
+            $_SESSION['flash'] = [
+                'type' => 'danger',
+                'message' => 'Datos invalidos. Verifica nombre, email, rol y una contrasena de al menos 6 caracteres.'
+            ];
+            header("Location: " . BASE_URL . "admin/dashboard.php#" . ($rol === 'barbero' ? 'barberos' : 'clientes'));
+            exit();
+        }
+
+        $nuevoUsuario = new User();
+        $nuevoUsuario->nombre = $nombre;
+        $nuevoUsuario->email = $email;
+        $nuevoUsuario->telefono = $telefono;
+        $nuevoUsuario->password = $password;
+        $nuevoUsuario->rol = $rol;
+
+        if ($nuevoUsuario->register()) {
+            $updateUser = $nuevoUsuario->conn->prepare("UPDATE users SET direccion = :direccion WHERE id = :id");
+            $updateUser->bindParam(':direccion', $direccion);
+            $updateUser->bindParam(':id', $nuevoUsuario->id);
+            $updateUser->execute();
+
+            if ($rol === 'barbero') {
+                $validStatuses = ['pendiente', 'en_revision', 'verificado', 'rechazado'];
+                if (!in_array($verificacion_status, $validStatuses, true)) {
+                    $verificacion_status = 'pendiente';
+                }
+
+                $updateBarber = $nuevoUsuario->conn->prepare(
+                    "UPDATE barberos
+                     SET especialidad = :especialidad,
+                         experiencia = :experiencia,
+                         descripcion = :descripcion,
+                         tarifa_hora = :tarifa_hora,
+                         verificacion_status = :verificacion_status,
+                         is_available = :is_available
+                     WHERE user_id = :user_id"
+                );
+                $updateBarber->bindParam(':especialidad', $especialidad);
+                $updateBarber->bindParam(':experiencia', $experiencia);
+                $updateBarber->bindParam(':descripcion', $descripcion);
+                $updateBarber->bindParam(':tarifa_hora', $tarifa_hora);
+                $updateBarber->bindParam(':verificacion_status', $verificacion_status);
+                $updateBarber->bindParam(':is_available', $is_available);
+                $updateBarber->bindParam(':user_id', $nuevoUsuario->id);
+                $updateBarber->execute();
+            }
+
+            $_SESSION['flash'] = [
+                'type' => 'success',
+                'message' => ucfirst($rol) . ' creado correctamente.'
+            ];
+        } else {
+            $_SESSION['flash'] = [
+                'type' => 'danger',
+                'message' => $nuevoUsuario->lastError ?: 'No se pudo crear el usuario.'
+            ];
+        }
+
+        header("Location: " . BASE_URL . "admin/dashboard.php#" . ($rol === 'barbero' ? 'barberos' : 'clientes'));
+        exit();
+    }
+
     if(isset($_POST['guardar_producto'])) {
         $data = [
             'id' => $_POST['producto_id'] ?? 0,
@@ -811,7 +895,10 @@ unset($_SESSION['flash']);
                 <div class="table-container">
                     <div class="table-header">
                         <h3><i class="fas fa-user-tie"></i> Gestión de Barberos</h3>
-                        <div class="search-box"><input type="text" id="search-barbero" placeholder="Buscar barbero..."></div>
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <button class="btn btn-success btn-sm" onclick="abrirCrearUsuario('barbero')"><i class="fas fa-user-plus"></i> Nuevo Barbero</button>
+                            <div class="search-box"><input type="text" id="search-barbero" placeholder="Buscar barbero..."></div>
+                        </div>
                     </div>
                     <?php if(empty($todos_barberos)): ?>
                         <div style="padding: 40px; text-align: center;">No hay barberos registrados</div>
@@ -846,7 +933,10 @@ unset($_SESSION['flash']);
                 <div class="table-container">
                     <div class="table-header">
                         <h3><i class="fas fa-users"></i> Gestión de Clientes</h3>
-                        <div class="search-box"><input type="text" id="search-cliente" placeholder="Buscar cliente..."></div>
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <button class="btn btn-success btn-sm" onclick="abrirCrearUsuario('cliente')"><i class="fas fa-user-plus"></i> Nuevo Cliente</button>
+                            <div class="search-box"><input type="text" id="search-cliente" placeholder="Buscar cliente..."></div>
+                        </div>
                     </div>
                     <?php if(empty($todos_clientes)): ?>
                         <div style="padding: 40px; text-align: center;">No hay clientes registrados</div>
@@ -917,6 +1007,7 @@ unset($_SESSION['flash']);
                     <div class="card-header"><h3><i class="fas fa-cog"></i> Configuración del Sistema</h3></div>
                     <div class="card-body">
                         <form method="POST">
+                            <?php echo csrf_field(); ?>
                             <div class="config-section">
                                 <h4><i class="fas fa-percentage"></i> Comisiones</h4>
                                 <div class="config-row">
@@ -952,6 +1043,7 @@ unset($_SESSION['flash']);
         <div class="modal-content">
             <div class="modal-header"><h3>Verificar Barbero</h3><button class="btn" onclick="cerrarModal('verificar-modal')">&times;</button></div>
             <form method="POST">
+                <?php echo csrf_field(); ?>
                 <div class="modal-body">
                     <input type="hidden" name="barbero_id" id="verificar-barbero-id">
                     <p>¿Deseas verificar a <strong id="verificar-barbero-nombre"></strong>?</p>
@@ -966,6 +1058,84 @@ unset($_SESSION['flash']);
     <!-- ============================================ -->
     <!-- MODAL PRODUCTO (CON MÚLTIPLES IMÁGENES) -->
     <!-- ============================================ -->
+    <div id="usuario-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="usuario-modal-title">Nuevo Usuario</h3>
+                <button class="btn" onclick="cerrarModal('usuario-modal')">&times;</button>
+            </div>
+            <form method="POST">
+                <?php echo csrf_field(); ?>
+                <div class="modal-body">
+                    <input type="hidden" name="crear_usuario_admin" value="1">
+                    <input type="hidden" name="rol" id="usuario-rol" value="cliente">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Nombre Completo *</label>
+                            <input type="text" name="nombre" id="usuario-nombre" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Email *</label>
+                            <input type="email" name="email" id="usuario-email" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Telefono</label>
+                            <input type="text" name="telefono" id="usuario-telefono">
+                        </div>
+                        <div class="form-group">
+                            <label>Contrasena *</label>
+                            <input type="text" name="password" id="usuario-password" minlength="6" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Direccion</label>
+                        <textarea name="direccion" id="usuario-direccion" rows="2" placeholder="Direccion del usuario"></textarea>
+                    </div>
+                    <div id="barbero-extra-fields" style="display:none;">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Especialidad</label>
+                                <input type="text" name="especialidad" id="usuario-especialidad" placeholder="Corte moderno, barba, etc.">
+                            </div>
+                            <div class="form-group">
+                                <label>Experiencia (anios)</label>
+                                <input type="number" name="experiencia" id="usuario-experiencia" min="0" max="50" value="0">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Tarifa por Hora</label>
+                                <input type="number" name="tarifa_hora" id="usuario-tarifa" min="0" step="0.01">
+                            </div>
+                            <div class="form-group">
+                                <label>Estado de Verificacion</label>
+                                <select name="verificacion_status" id="usuario-verificacion">
+                                    <option value="pendiente">Pendiente</option>
+                                    <option value="en_revision">En revision</option>
+                                    <option value="verificado">Verificado</option>
+                                    <option value="rechazado">Rechazado</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Descripcion Profesional</label>
+                            <textarea name="descripcion" id="usuario-descripcion" rows="3" placeholder="Perfil profesional del barbero"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label><input type="checkbox" name="is_available" id="usuario-disponible" value="1"> Marcar como disponible ahora</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn" onclick="cerrarModal('usuario-modal')">Cancelar</button>
+                    <button type="submit" class="btn btn-success">Crear Usuario</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <div id="producto-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -973,6 +1143,7 @@ unset($_SESSION['flash']);
                 <button class="btn" onclick="cerrarModal('producto-modal')">&times;</button>
             </div>
             <form method="POST" enctype="multipart/form-data">
+                <?php echo csrf_field(); ?>
                 <div class="modal-body">
                     <input type="hidden" name="producto_id" id="producto-id" value="0">
                     
@@ -1052,6 +1223,8 @@ unset($_SESSION['flash']);
     </div>
 
     <script>
+        const csrfToken = <?php echo json_encode(csrf_token()); ?>;
+
         // ============================================
         // NAVEGACIÓN ENTRE SECCIONES
         // ============================================
@@ -1065,9 +1238,11 @@ unset($_SESSION['flash']);
         
         document.querySelectorAll('.nav-item').forEach(item => {
             item.addEventListener('click', function(e) {
-                e.preventDefault();
                 const section = this.getAttribute('data-section');
-                if(section) cambiarSeccion(section);
+                if(section) {
+                    e.preventDefault();
+                    cambiarSeccion(section);
+                }
             });
         });
         
@@ -1116,6 +1291,24 @@ unset($_SESSION['flash']);
             document.getElementById('verificar-barbero-nombre').innerText = nombre;
             document.getElementById('verificar-modal').style.display = 'flex';
         }
+
+        function abrirCrearUsuario(rol) {
+            document.getElementById('usuario-rol').value = rol;
+            document.getElementById('usuario-modal-title').innerText = rol === 'barbero' ? 'Nuevo Barbero' : 'Nuevo Cliente';
+            document.getElementById('usuario-nombre').value = '';
+            document.getElementById('usuario-email').value = '';
+            document.getElementById('usuario-telefono').value = '';
+            document.getElementById('usuario-password').value = '';
+            document.getElementById('usuario-direccion').value = '';
+            document.getElementById('usuario-especialidad').value = '';
+            document.getElementById('usuario-experiencia').value = 0;
+            document.getElementById('usuario-tarifa').value = '';
+            document.getElementById('usuario-verificacion').value = rol === 'barbero' ? 'verificado' : 'pendiente';
+            document.getElementById('usuario-descripcion').value = '';
+            document.getElementById('usuario-disponible').checked = rol === 'barbero';
+            document.getElementById('barbero-extra-fields').style.display = rol === 'barbero' ? 'block' : 'none';
+            document.getElementById('usuario-modal').style.display = 'flex';
+        }
         
         // ============================================
         // TOGGLE BARBERO
@@ -1124,7 +1317,7 @@ unset($_SESSION['flash']);
             if(confirm('¿Cambiar estado del barbero?')) {
                 const form = document.createElement('form');
                 form.method = 'POST';
-                form.innerHTML = `<input type="hidden" name="toggle_barbero" value="1"><input type="hidden" name="barbero_id" value="${id}"><input type="hidden" name="activo" value="${estado}">`;
+                form.innerHTML = `<input type="hidden" name="csrf_token" value="${csrfToken}"><input type="hidden" name="toggle_barbero" value="1"><input type="hidden" name="barbero_id" value="${id}"><input type="hidden" name="activo" value="${estado}">`;
                 document.body.appendChild(form);
                 form.submit();
             }
@@ -1218,7 +1411,7 @@ unset($_SESSION['flash']);
             if(confirm('¿Eliminar este producto permanentemente?')) {
                 const form = document.createElement('form');
                 form.method = 'POST';
-                form.innerHTML = `<input type="hidden" name="eliminar_producto" value="1"><input type="hidden" name="producto_id" value="${id}">`;
+                form.innerHTML = `<input type="hidden" name="csrf_token" value="${csrfToken}"><input type="hidden" name="eliminar_producto" value="1"><input type="hidden" name="producto_id" value="${id}">`;
                 document.body.appendChild(form);
                 form.submit();
             }
@@ -1228,7 +1421,7 @@ unset($_SESSION['flash']);
             if(confirm('¿Eliminar esta imagen?')) {
                 const form = document.createElement('form');
                 form.method = 'POST';
-                form.innerHTML = `<input type="hidden" name="eliminar_imagen" value="1"><input type="hidden" name="imagen_id" value="${imagenId}">`;
+                form.innerHTML = `<input type="hidden" name="csrf_token" value="${csrfToken}"><input type="hidden" name="eliminar_imagen" value="1"><input type="hidden" name="imagen_id" value="${imagenId}">`;
                 document.body.appendChild(form);
                 form.submit();
             }

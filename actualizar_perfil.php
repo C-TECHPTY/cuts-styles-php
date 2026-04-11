@@ -3,31 +3,38 @@
 require_once 'config/config.php';
 require_once 'classes/User.php';
 
-if(!isset($_SESSION['user_id'])) {
-    redirect('login.php');
+requireLogin();
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    redirect($_SESSION['user_rol'] === 'cliente' ? 'cliente.php' : 'barbero.php');
+}
+
+try {
+    verificarCSRFToken($_POST['csrf_token'] ?? null);
+} catch (Exception $e) {
+    setFlash('danger', 'Sesion invalida. Intenta nuevamente.');
+    redirect($_SESSION['user_rol'] === 'cliente' ? 'cliente.php' : 'barbero.php');
 }
 
 $user = new User();
-$user->id = $_SESSION['user_id'];
-
 $query = "UPDATE users SET nombre = :nombre, telefono = :telefono, direccion = :direccion WHERE id = :id";
 $stmt = $user->conn->prepare($query);
-$stmt->bindParam(":nombre", $_POST['nombre']);
-$stmt->bindParam(":telefono", $_POST['telefono']);
-$stmt->bindParam(":direccion", $_POST['direccion']);
-$stmt->bindParam(":id", $_SESSION['user_id']);
 
-if($stmt->execute()) {
-    $_SESSION['user_nombre'] = $_POST['nombre'];
+$nombre = trim((string) ($_POST['nombre'] ?? ''));
+$telefono = trim((string) ($_POST['telefono'] ?? ''));
+$direccion = trim((string) ($_POST['direccion'] ?? ''));
+$userId = $_SESSION['user_id'];
+
+$stmt->bindParam(':nombre', $nombre);
+$stmt->bindParam(':telefono', $telefono);
+$stmt->bindParam(':direccion', $direccion);
+$stmt->bindParam(':id', $userId);
+
+if ($stmt->execute()) {
+    $_SESSION['user_nombre'] = $nombre;
     setFlash('success', 'Perfil actualizado exitosamente');
 } else {
     setFlash('danger', 'Error al actualizar el perfil');
 }
 
-// Redirigir según rol
-if($_SESSION['user_rol'] == 'cliente') {
-    redirect('cliente.php');
-} else {
-    redirect('barbero.php');
-}
-?>
+redirect($_SESSION['user_rol'] === 'cliente' ? 'cliente.php' : 'barbero.php');

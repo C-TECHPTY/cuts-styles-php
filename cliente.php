@@ -27,6 +27,12 @@ $cliente_id = $cliente['id'] ?? null;
 
 // Procesar solicitud de servicio
 if($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['solicitar_servicio']) && $cliente_id) {
+    try {
+        verificarCSRFToken($_POST['csrf_token'] ?? null);
+    } catch (Exception $e) {
+        setFlash('danger', 'Sesion invalida. Intenta nuevamente.');
+        redirect('cliente.php');
+    }
     $tipo = $_POST['servicio_tipo'];
     $notas = $_POST['servicio_notas'];
     $horarios = $_POST['horario'] ?? [];
@@ -388,6 +394,7 @@ if($cliente_id) {
                     <div class="table-header"><h3>Solicitar Nuevo Servicio</h3></div>
                     <div class="form-container">
                         <form method="POST">
+                            <?php echo csrf_field(); ?>
                             <div class="form-group">
                                 <label><i class="fas fa-cut"></i> Tipo de Servicio</label>
                                 <select name="servicio_tipo" required>
@@ -527,6 +534,7 @@ if($cliente_id) {
                     <div class="table-header"><h3>Mi Perfil</h3></div>
                     <div class="form-container">
                         <form method="POST" action="actualizar_perfil.php">
+                            <?php echo csrf_field(); ?>
                             <div class="form-group">
                                 <label><i class="fas fa-envelope"></i> Email</label>
                                 <input type="email" value="<?php echo htmlspecialchars($_SESSION['user_email']); ?>" readonly>
@@ -568,9 +576,9 @@ if($cliente_id) {
         // Navegación
         document.querySelectorAll('.nav-item').forEach(item => {
             item.addEventListener('click', function(e) {
-                e.preventDefault();
                 const section = this.getAttribute('data-section');
                 if(section) {
+                    e.preventDefault();
                     document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
                     this.classList.add('active');
                     document.querySelectorAll('.section-content').forEach(content => content.classList.remove('active'));
