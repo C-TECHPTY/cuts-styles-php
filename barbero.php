@@ -139,7 +139,7 @@ if($barbero_id) {
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Dashboard Barbero - Cuts & Styles</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <?php include BASE_PATH . 'includes/pwa_head.php'; ?>
@@ -359,9 +359,13 @@ if($barbero_id) {
                 <a href="logout.php" class="nav-item"><i class="fas fa-sign-out-alt"></i> <span>Cerrar Sesión</span></a>
             </nav>
         </aside>
+        <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
         <main class="main-content">
             <header class="header">
+                <button type="button" class="mobile-sidebar-toggle" id="mobile-sidebar-toggle" aria-label="Abrir menu" aria-expanded="false">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <h2 id="section-title">Dashboard Barbero</h2>
                 <div style="display: flex; gap: 10px;">
                     <form method="POST" style="display: inline;">
@@ -649,6 +653,29 @@ if($barbero_id) {
     </div>
 
     <script>
+        const responsiveBody = document.body;
+        const sidebarToggle = document.getElementById('mobile-sidebar-toggle');
+        const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+
+        function setResponsiveSidebar(open) {
+            responsiveBody.classList.toggle('responsive-sidebar-open', open);
+            sidebarToggle?.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+
+        sidebarToggle?.addEventListener('click', () => {
+            setResponsiveSidebar(!responsiveBody.classList.contains('responsive-sidebar-open'));
+        });
+
+        sidebarBackdrop?.addEventListener('click', () => {
+            setResponsiveSidebar(false);
+        });
+
+        window.addEventListener('resize', () => {
+            if(window.innerWidth > 1024) {
+                setResponsiveSidebar(false);
+            }
+        });
+
         // Navegación entre secciones
         document.querySelectorAll('.nav-item').forEach(item => {
             item.addEventListener('click', function(e) {
@@ -660,6 +687,9 @@ if($barbero_id) {
                     document.querySelectorAll('.section-content').forEach(content => content.classList.remove('active'));
                     document.getElementById(`${section}-section`).classList.add('active');
                     document.getElementById('section-title').innerHTML = this.querySelector('span').innerHTML;
+                    if(window.innerWidth <= 1024) {
+                        setResponsiveSidebar(false);
+                    }
                 }
             });
         });

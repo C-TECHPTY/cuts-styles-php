@@ -2,6 +2,7 @@
 // classes/Rewards.php
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/config.php';
+require_once __DIR__ . '/LoyaltyManager.php';
 
 class Rewards {
     public $conn;
@@ -62,6 +63,9 @@ class Rewards {
             $update_stmt->bindParam(":puntos", $recompensa['puntos_requeridos']);
             $update_stmt->bindParam(":cliente_id", $cliente_id);
             $update_stmt->execute();
+
+            $loyaltyManager = new LoyaltyManager($this->conn);
+            $loyaltyManager->registerRedeem((int) $cliente_id, (int) $recompensa_id, (int) $recompensa['puntos_requeridos']);
             
             return ['success' => true, 'message' => 'Recompensa canjeada exitosamente'];
             

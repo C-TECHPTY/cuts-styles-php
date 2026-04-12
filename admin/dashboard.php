@@ -5,6 +5,9 @@ require_once __DIR__ . '/../classes/User.php';
 require_once __DIR__ . '/../classes/Service.php';
 require_once __DIR__ . '/../classes/Verification.php';
 require_once __DIR__ . '/../classes/Product.php';
+require_once __DIR__ . '/../classes/SystemSettings.php';
+require_once __DIR__ . '/../classes/MonetizationManager.php';
+require_once __DIR__ . '/../classes/LoyaltyManager.php';
 
 // Verificar autenticación y rol de admin
 if(!isset($_SESSION['user_id']) || $_SESSION['user_rol'] != 'admin') {
@@ -16,6 +19,10 @@ $user = new User();
 $service = new Service();
 $verification = new Verification();
 $productClass = new Product();
+$settingsManager = new SystemSettings($user->conn);
+$monetizationManager = new MonetizationManager($user->conn);
+$loyaltyManager = new LoyaltyManager($user->conn);
+$monetizationManager->refreshBarberStatuses();
 
 // ============================================
 // PROCESAR ACCIONES POST
@@ -191,10 +198,44 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
         header("Location: " . BASE_URL . "admin/dashboard.php#barberos");
         exit();
     }
-    
-    // Guardar configuración
+    // Guardar configuracion extendida
     if(isset($_POST['guardar_config'])) {
-        $_SESSION['flash'] = ['type' => 'success', 'message' => 'Configuración guardada'];
+        $trialDays = (int) ($_POST['barber_trial_days'] ?? 15);
+        if (!in_array($trialDays, [0, 15, 30], true)) {
+            $trialDays = 15;
+        }
+
+        $paymentStatus = $_POST['future_default_payment_status'] ?? 'pending';
+        if (!in_array($paymentStatus, ['pending', 'held', 'released', 'refunded', 'disputed'], true)) {
+            $paymentStatus = 'pending';
+        }
+
+        $saved = $settingsManager->setMany([
+            'monetization_enabled' => isset($_POST['monetization_enabled']) ? '1' : '0',
+            'barber_subscription_enabled' => isset($_POST['barber_subscription_enabled']) ? '1' : '0',
+            'barber_subscription_monthly_price' => number_format((float) ($_POST['barber_subscription_monthly_price'] ?? 0), 2, '.', ''),
+            'barber_subscription_annual_price' => number_format((float) ($_POST['barber_subscription_annual_price'] ?? 0), 2, '.', ''),
+            'barber_commission_enabled' => isset($_POST['barber_commission_enabled']) ? '1' : '0',
+            'barber_commission_percentage' => number_format((float) ($_POST['barber_commission_percentage'] ?? 0), 2, '.', ''),
+            'barber_commission_cap' => trim((string) ($_POST['barber_commission_cap'] ?? '')),
+            'barber_free_mode_enabled' => isset($_POST['barber_free_mode_enabled']) ? '1' : '0',
+            'barber_trial_enabled' => isset($_POST['barber_trial_enabled']) ? '1' : '0',
+            'barber_trial_days' => (string) $trialDays,
+            'loyalty_enabled' => isset($_POST['loyalty_enabled']) ? '1' : '0',
+            'loyalty_points_per_service' => (string) max(0, (int) ($_POST['loyalty_points_per_service'] ?? 0)),
+            'loyalty_points_per_currency' => number_format((float) ($_POST['loyalty_points_per_currency'] ?? 0), 2, '.', ''),
+            'loyalty_reward_points' => (string) max(0, (int) ($_POST['loyalty_reward_points'] ?? 0)),
+            'loyalty_reward_value' => number_format((float) ($_POST['loyalty_reward_value'] ?? 0), 2, '.', ''),
+            'future_payment_hold_enabled' => isset($_POST['future_payment_hold_enabled']) ? '1' : '0',
+            'future_default_payment_status' => $paymentStatus,
+        ]);
+
+        $_SESSION['flash'] = [
+            'type' => $saved ? 'success' : 'danger',
+            'message' => $saved
+                ? 'Configuracion monetizable guardada correctamente.'
+                : 'No se pudo guardar la configuracion. Ejecuta la migracion nueva para habilitar esta extension.'
+        ];
         header("Location: " . BASE_URL . "admin/dashboard.php#configuracion");
         exit();
     }
@@ -315,6 +356,90 @@ $todos_clientes = $clientes_result ? $clientes_result->fetchAll(PDO::FETCH_ASSOC
 // Productos
 $productos = $productClass->getAll('todos', 100);
 
+$appSettings = $settingsManager->getAll();
+$monetizationStats = [
+    'subscription_monthly' => 0,
+    'subscription_annual' => 0,
+    'subscription_total' => 0,
+    'commission_monthly' => 0,
+    'commission_annual' => 0,
+    'commission_total' => 0,
+    'platform_total' => 0,
+];
+
+if ($monetizationManager->hasTable('barber_subscriptions')) {
+    $subscriptionStats = $user->conn->query("SELECT
+        COALESCE(SUM(CASE WHEN YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE()) THEN amount ELSE 0 END), 0) AS monthly_total,
+        COALESCE(SUM(CASE WHEN YEAR(created_at) = YEAR(CURDATE()) THEN amount ELSE 0 END), 0) AS annual_total,
+        COALESCE(SUM(amount), 0) AS total
+        FROM barber_subscriptions
+        WHERE status IN ('active', 'expired', 'cancelled')");
+    if ($subscriptionStats) {
+        $subscriptionRow = $subscriptionStats->fetch(PDO::FETCH_ASSOC) ?: [];
+        $monetizationStats['subscription_monthly'] = (float) ($subscriptionRow['monthly_total'] ?? 0);
+        $monetizationStats['subscription_annual'] = (float) ($subscriptionRow['annual_total'] ?? 0);
+        $monetizationStats['subscription_total'] = (float) ($subscriptionRow['total'] ?? 0);
+    }
+}
+
+if ($monetizationManager->hasTable('service_commissions')) {
+    $commissionStats = $user->conn->query("SELECT
+        COALESCE(SUM(CASE WHEN YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE()) THEN commission_amount ELSE 0 END), 0) AS monthly_total,
+        COALESCE(SUM(CASE WHEN YEAR(created_at) = YEAR(CURDATE()) THEN commission_amount ELSE 0 END), 0) AS annual_total,
+        COALESCE(SUM(commission_amount), 0) AS total_commission,
+        COALESCE(SUM(platform_amount), 0) AS total_platform
+        FROM service_commissions");
+    if ($commissionStats) {
+        $commissionRow = $commissionStats->fetch(PDO::FETCH_ASSOC) ?: [];
+        $monetizationStats['commission_monthly'] = (float) ($commissionRow['monthly_total'] ?? 0);
+        $monetizationStats['commission_annual'] = (float) ($commissionRow['annual_total'] ?? 0);
+        $monetizationStats['commission_total'] = (float) ($commissionRow['total_commission'] ?? 0);
+        $monetizationStats['platform_total'] = (float) ($commissionRow['total_platform'] ?? 0);
+    }
+}
+
+$barberMonetizationBuckets = ['trial' => 0, 'active' => 0, 'expired' => 0, 'free' => 0, 'cancelled' => 0];
+$barbersMonetizationList = [];
+if ($monetizationManager->hasTable('barber_monetization_profiles')) {
+    $bucketResult = $user->conn->query("SELECT status, COUNT(*) AS total FROM barber_monetization_profiles GROUP BY status");
+    if ($bucketResult) {
+        foreach ($bucketResult->fetchAll(PDO::FETCH_ASSOC) as $bucketRow) {
+            $statusKey = $bucketRow['status'];
+            if (array_key_exists($statusKey, $barberMonetizationBuckets)) {
+                $barberMonetizationBuckets[$statusKey] = (int) $bucketRow['total'];
+            }
+        }
+    }
+
+    $barbersStatusResult = $user->conn->query("SELECT u.nombre, u.email, bmp.status, bmp.trial_start_date, bmp.trial_end_date, bmp.subscription_ends_at
+        FROM barber_monetization_profiles bmp
+        JOIN barberos b ON bmp.barber_id = b.id
+        JOIN users u ON b.user_id = u.id
+        ORDER BY bmp.updated_at DESC
+        LIMIT 12");
+    $barbersMonetizationList = $barbersStatusResult ? $barbersStatusResult->fetchAll(PDO::FETCH_ASSOC) : [];
+}
+
+$pointsStats = ['earned' => 0, 'redeemed' => 0, 'expired' => 0, 'current_balance' => 0];
+if ($loyaltyManager->hasTable('puntos_historial')) {
+    $pointsResult = $user->conn->query("SELECT
+        COALESCE(SUM(CASE WHEN tipo_movimiento = 'earned' THEN puntos ELSE 0 END), 0) AS earned_total,
+        COALESCE(SUM(CASE WHEN tipo_movimiento = 'redeemed' THEN ABS(puntos) ELSE 0 END), 0) AS redeemed_total,
+        COALESCE(SUM(CASE WHEN tipo_movimiento = 'expired' THEN ABS(puntos) ELSE 0 END), 0) AS expired_total
+        FROM puntos_historial");
+    if ($pointsResult) {
+        $pointsRow = $pointsResult->fetch(PDO::FETCH_ASSOC) ?: [];
+        $pointsStats['earned'] = (int) ($pointsRow['earned_total'] ?? 0);
+        $pointsStats['redeemed'] = (int) ($pointsRow['redeemed_total'] ?? 0);
+        $pointsStats['expired'] = (int) ($pointsRow['expired_total'] ?? 0);
+    }
+}
+
+$currentBalanceResult = $user->conn->query("SELECT COALESCE(SUM(puntos), 0) AS total FROM clientes");
+if ($currentBalanceResult) {
+    $pointsStats['current_balance'] = (int) (($currentBalanceResult->fetch(PDO::FETCH_ASSOC) ?: [])['total'] ?? 0);
+}
+
 // Flash message
 $flash = isset($_SESSION['flash']) ? $_SESSION['flash'] : null;
 unset($_SESSION['flash']);
@@ -323,7 +448,7 @@ unset($_SESSION['flash']);
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Admin Dashboard - Cuts & Styles</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -745,6 +870,119 @@ unset($_SESSION['flash']);
             .table-container { overflow-x: auto; }
             table { min-width: 600px; }
         }
+        @media (max-width: 1024px) {
+            html, body {
+                overflow-x: hidden;
+            }
+            .admin-container {
+                display: block !important;
+                min-height: auto !important;
+                overflow: visible !important;
+            }
+            .sidebar {
+                position: relative !important;
+                top: auto !important;
+                left: auto !important;
+                bottom: auto !important;
+                width: 100% !important;
+                max-width: none !important;
+                height: auto !important;
+                transform: none !important;
+                overflow: visible !important;
+                box-shadow: none !important;
+                z-index: auto !important;
+            }
+            .sidebar-backdrop,
+            .mobile-sidebar-toggle {
+                display: none !important;
+            }
+            .sidebar-header {
+                padding: 14px 16px !important;
+            }
+            .sidebar-header h2 {
+                font-size: 20px;
+            }
+            .admin-info {
+                display: none !important;
+            }
+            .nav-menu {
+                display: flex !important;
+                align-items: center;
+                gap: 8px;
+                overflow-x: auto;
+                overflow-y: hidden;
+                white-space: nowrap;
+                padding: 10px 16px 14px !important;
+                scrollbar-width: thin;
+            }
+            .nav-item {
+                flex: 0 0 auto;
+                justify-content: center !important;
+                border-left: 0 !important;
+                border-bottom: 3px solid transparent !important;
+                padding: 12px 14px !important;
+            }
+            .nav-item.active {
+                border-left-color: transparent !important;
+                border-bottom-color: var(--secondary) !important;
+            }
+            .main-content {
+                margin-left: 0 !important;
+                padding: 18px !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                overflow: visible !important;
+            }
+            .header,
+            .section,
+            .section.active,
+            .card,
+            .card-body,
+            .table-container,
+            .stats-grid,
+            .dashboard-layout {
+                width: 100%;
+                max-width: 100%;
+                min-width: 0;
+            }
+            .stats-grid,
+            .dashboard-layout,
+            .config-row,
+            .form-row {
+                grid-template-columns: 1fr !important;
+            }
+            .table-container {
+                overflow-x: auto !important;
+                overflow-y: visible !important;
+            }
+            table {
+                min-width: 600px;
+            }
+        }
+        @media (max-width: 768px) {
+            .sidebar-header h2 span,
+            .nav-item span,
+            .nav-badge {
+                display: none !important;
+            }
+            .nav-item {
+                min-width: 52px;
+                padding: 12px !important;
+            }
+            .nav-item i {
+                width: auto;
+                margin: 0;
+            }
+            .header {
+                gap: 12px;
+                align-items: flex-start;
+            }
+            .header h1 {
+                width: 100%;
+                font-size: 1.5rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -773,10 +1011,14 @@ unset($_SESSION['flash']);
                 <a href="../logout.php" class="nav-item"><i class="fas fa-sign-out-alt"></i><span>Cerrar Sesión</span></a>
             </nav>
         </aside>
+        <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
         <!-- Main Content -->
         <main class="main-content">
             <div class="header">
+                <button type="button" class="mobile-sidebar-toggle" id="mobile-sidebar-toggle" aria-label="Abrir menu" aria-expanded="false">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <h1 id="section-title"><i class="fas fa-tachometer-alt"></i> Dashboard</h1>
                 <button class="btn btn-primary" onclick="location.reload()"><i class="fas fa-sync-alt"></i> Actualizar</button>
             </div>
@@ -1005,32 +1247,106 @@ unset($_SESSION['flash']);
             <!-- ============================================ -->
             <section id="configuracion-section" class="section">
                 <div class="card">
-                    <div class="card-header"><h3><i class="fas fa-cog"></i> Configuración del Sistema</h3></div>
+                    <div class="card-header"><h3><i class="fas fa-cog"></i> Configuracion Monetizable y Fidelizacion</h3></div>
                     <div class="card-body">
                         <form method="POST">
                             <?php echo csrf_field(); ?>
                             <div class="config-section">
-                                <h4><i class="fas fa-percentage"></i> Comisiones</h4>
+                                <h4><i class="fas fa-sliders-h"></i> Monetizacion Global</h4>
                                 <div class="config-row">
-                                    <div class="form-group"><label>Comisión de la plataforma (%)</label><input type="number" step="0.1" min="0" max="100" name="comision" value="20"><small>Porcentaje que recibe la plataforma por cada servicio</small></div>
+                                    <div class="form-group"><label><input type="checkbox" name="monetization_enabled" value="1" <?php echo !empty($appSettings['monetization_enabled']) ? 'checked' : ''; ?>> Activar monetizacion</label><small>Permite encender o apagar cobros sin tocar codigo.</small></div>
+                                    <div class="form-group"><label><input type="checkbox" name="barber_free_mode_enabled" value="1" <?php echo !empty($appSettings['barber_free_mode_enabled']) ? 'checked' : ''; ?>> Permitir modo gratis</label><small>La plataforma puede empezar gratis y monetizar despues.</small></div>
+                                    <div class="form-group"><label><input type="checkbox" name="future_payment_hold_enabled" value="1" <?php echo !empty($appSettings['future_payment_hold_enabled']) ? 'checked' : ''; ?>> Preparar retencion futura</label><small>Base para held, released, refunded y disputed.</small></div>
+                                    <div class="form-group"><label>Estado inicial de pagos futuros</label><select name="future_default_payment_status"><option value="pending" <?php echo ($appSettings['future_default_payment_status'] ?? 'pending') === 'pending' ? 'selected' : ''; ?>>pending</option><option value="held" <?php echo ($appSettings['future_default_payment_status'] ?? '') === 'held' ? 'selected' : ''; ?>>held</option><option value="released" <?php echo ($appSettings['future_default_payment_status'] ?? '') === 'released' ? 'selected' : ''; ?>>released</option><option value="refunded" <?php echo ($appSettings['future_default_payment_status'] ?? '') === 'refunded' ? 'selected' : ''; ?>>refunded</option><option value="disputed" <?php echo ($appSettings['future_default_payment_status'] ?? '') === 'disputed' ? 'selected' : ''; ?>>disputed</option></select></div>
                                 </div>
                             </div>
                             <div class="config-section">
-                                <h4><i class="fas fa-clock"></i> Tiempos</h4>
+                                <h4><i class="fas fa-credit-card"></i> Suscripciones para Barberos</h4>
                                 <div class="config-row">
-                                    <div class="form-group"><label>Tiempo de cancelación (minutos)</label><input type="number" min="0" name="tiempo_cancelacion" value="60"></div>
-                                    <div class="form-group"><label>Radio de búsqueda (km)</label><input type="number" min="1" name="radio_busqueda" value="10"></div>
+                                    <div class="form-group"><label><input type="checkbox" name="barber_subscription_enabled" value="1" <?php echo !empty($appSettings['barber_subscription_enabled']) ? 'checked' : ''; ?>> Activar suscripcion</label></div>
+                                    <div class="form-group"><label>Precio mensual</label><input type="number" min="0" step="0.01" name="barber_subscription_monthly_price" value="<?php echo htmlspecialchars($appSettings['barber_subscription_monthly_price'] ?? '0'); ?>"></div>
+                                    <div class="form-group"><label>Precio anual</label><input type="number" min="0" step="0.01" name="barber_subscription_annual_price" value="<?php echo htmlspecialchars($appSettings['barber_subscription_annual_price'] ?? '0'); ?>"></div>
                                 </div>
                             </div>
                             <div class="config-section">
-                                <h4><i class="fas fa-star"></i> Puntos</h4>
+                                <h4><i class="fas fa-percentage"></i> Comision por Corte</h4>
                                 <div class="config-row">
-                                    <div class="form-group"><label>Puntos por servicio</label><input type="number" min="0" name="puntos_servicio" value="10"></div>
-                                    <div class="form-group"><label>Puntos por dólar gastado</label><input type="number" min="0" step="0.1" name="puntos_dolar" value="1"></div>
+                                    <div class="form-group"><label><input type="checkbox" name="barber_commission_enabled" value="1" <?php echo !empty($appSettings['barber_commission_enabled']) ? 'checked' : ''; ?>> Activar comision</label></div>
+                                    <div class="form-group"><label>Porcentaje por corte (%)</label><input type="number" min="0" max="100" step="0.01" name="barber_commission_percentage" value="<?php echo htmlspecialchars($appSettings['barber_commission_percentage'] ?? '0'); ?>"></div>
+                                    <div class="form-group"><label>Tope maximo por servicio (opcional)</label><input type="number" min="0" step="0.01" name="barber_commission_cap" value="<?php echo htmlspecialchars($appSettings['barber_commission_cap'] ?? ''); ?>"></div>
                                 </div>
                             </div>
-                            <div style="text-align: right;"><button type="submit" name="guardar_config" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Configuración</button></div>
+                            <div class="config-section">
+                                <h4><i class="fas fa-hourglass-half"></i> Trial para Nuevos Barberos</h4>
+                                <div class="config-row">
+                                    <div class="form-group"><label><input type="checkbox" name="barber_trial_enabled" value="1" <?php echo !empty($appSettings['barber_trial_enabled']) ? 'checked' : ''; ?>> Activar trial automatico</label></div>
+                                    <div class="form-group"><label>Dias de trial</label><select name="barber_trial_days"><option value="0" <?php echo ($appSettings['barber_trial_days'] ?? '15') === '0' ? 'selected' : ''; ?>>0 dias</option><option value="15" <?php echo ($appSettings['barber_trial_days'] ?? '15') === '15' ? 'selected' : ''; ?>>15 dias</option><option value="30" <?php echo ($appSettings['barber_trial_days'] ?? '') === '30' ? 'selected' : ''; ?>>30 dias</option></select></div>
+                                </div>
+                            </div>
+                            <div class="config-section">
+                                <h4><i class="fas fa-star"></i> Puntos y Recompensas</h4>
+                                <div class="config-row">
+                                    <div class="form-group"><label><input type="checkbox" name="loyalty_enabled" value="1" <?php echo !empty($appSettings['loyalty_enabled']) ? 'checked' : ''; ?>> Activar sistema de puntos</label></div>
+                                    <div class="form-group"><label>Puntos por corte</label><input type="number" min="0" name="loyalty_points_per_service" value="<?php echo htmlspecialchars($appSettings['loyalty_points_per_service'] ?? '10'); ?>"></div>
+                                    <div class="form-group"><label>Puntos por monto gastado</label><input type="number" min="0" step="0.01" name="loyalty_points_per_currency" value="<?php echo htmlspecialchars($appSettings['loyalty_points_per_currency'] ?? '0'); ?>"></div>
+                                    <div class="form-group"><label>Puntos requeridos para recompensa</label><input type="number" min="0" name="loyalty_reward_points" value="<?php echo htmlspecialchars($appSettings['loyalty_reward_points'] ?? '100'); ?>"></div>
+                                    <div class="form-group"><label>Valor de recompensa</label><input type="number" min="0" step="0.01" name="loyalty_reward_value" value="<?php echo htmlspecialchars($appSettings['loyalty_reward_value'] ?? '10'); ?>"></div>
+                                </div>
+                            </div>
+                            <div style="text-align: right;"><button type="submit" name="guardar_config" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Configuracion</button></div>
                         </form>
+
+                        <div class="config-section" style="margin-top: 25px;">
+                            <h4><i class="fas fa-chart-line"></i> Resumen de Monetizacion</h4>
+                            <div class="stats-grid">
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-calendar-alt"></i></div><div class="stat-value">$<?php echo number_format($monetizationStats['subscription_monthly'], 2); ?></div><div class="stat-label">Suscripciones del mes</div></div>
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-calendar"></i></div><div class="stat-value">$<?php echo number_format($monetizationStats['subscription_annual'], 2); ?></div><div class="stat-label">Suscripciones del anio</div></div>
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-cut"></i></div><div class="stat-value">$<?php echo number_format($monetizationStats['commission_monthly'], 2); ?></div><div class="stat-label">Comisiones del mes</div></div>
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-piggy-bank"></i></div><div class="stat-value">$<?php echo number_format($monetizationStats['platform_total'], 2); ?></div><div class="stat-label">Total generado</div></div>
+                            </div>
+                        </div>
+
+                        <div class="config-section">
+                            <h4><i class="fas fa-user-tie"></i> Estado Monetizable de Barberos</h4>
+                            <div class="stats-grid">
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-flask"></i></div><div class="stat-value"><?php echo $barberMonetizationBuckets['trial']; ?></div><div class="stat-label">En trial</div></div>
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-check-circle"></i></div><div class="stat-value"><?php echo $barberMonetizationBuckets['active']; ?></div><div class="stat-label">Activos</div></div>
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-hourglass-end"></i></div><div class="stat-value"><?php echo $barberMonetizationBuckets['expired']; ?></div><div class="stat-label">Vencidos</div></div>
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-seedling"></i></div><div class="stat-value"><?php echo $barberMonetizationBuckets['free']; ?></div><div class="stat-label">Free</div></div>
+                            </div>
+                            <div class="table-container">
+                                <div class="table-header"><h3>Barberos y estado actual</h3></div>
+                                <table class="table">
+                                    <thead><tr><th>Barbero</th><th>Email</th><th>Estado</th><th>Trial inicio</th><th>Trial fin</th><th>Suscripcion</th></tr></thead>
+                                    <tbody>
+                                        <?php if(empty($barbersMonetizationList)): ?>
+                                            <tr><td colspan="6" style="text-align:center;">No hay datos monetizables todavia. Ejecuta la migracion para habilitarlos.</td></tr>
+                                        <?php else: ?>
+                                            <?php foreach($barbersMonetizationList as $billingBarber): ?>
+                                            <tr>
+                                                <td><?php echo htmlspecialchars($billingBarber['nombre']); ?></td>
+                                                <td><?php echo htmlspecialchars($billingBarber['email']); ?></td>
+                                                <td><span class="badge badge-info"><?php echo htmlspecialchars($billingBarber['status']); ?></span></td>
+                                                <td><?php echo !empty($billingBarber['trial_start_date']) ? date('d/m/Y', strtotime($billingBarber['trial_start_date'])) : '-'; ?></td>
+                                                <td><?php echo !empty($billingBarber['trial_end_date']) ? date('d/m/Y', strtotime($billingBarber['trial_end_date'])) : '-'; ?></td>
+                                                <td><?php echo !empty($billingBarber['subscription_ends_at']) ? date('d/m/Y', strtotime($billingBarber['subscription_ends_at'])) : '-'; ?></td>
+                                            </tr>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="config-section">
+                            <h4><i class="fas fa-gift"></i> Resumen de Puntos</h4>
+                            <div class="stats-grid">
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-plus-circle"></i></div><div class="stat-value"><?php echo $pointsStats['earned']; ?></div><div class="stat-label">Puntos acumulados</div></div>
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-exchange-alt"></i></div><div class="stat-value"><?php echo $pointsStats['redeemed']; ?></div><div class="stat-label">Puntos redimidos</div></div>
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-ban"></i></div><div class="stat-value"><?php echo $pointsStats['expired']; ?></div><div class="stat-label">Puntos expirados</div></div>
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-wallet"></i></div><div class="stat-value"><?php echo $pointsStats['current_balance']; ?></div><div class="stat-label">Saldo actual</div></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -1225,6 +1541,28 @@ unset($_SESSION['flash']);
 
     <script>
         const csrfToken = <?php echo json_encode(csrf_token()); ?>;
+        const responsiveBody = document.body;
+        const sidebarToggle = document.getElementById('mobile-sidebar-toggle');
+        const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+
+        function setResponsiveSidebar(open) {
+            responsiveBody.classList.toggle('responsive-sidebar-open', open);
+            sidebarToggle?.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+
+        sidebarToggle?.addEventListener('click', () => {
+            setResponsiveSidebar(!responsiveBody.classList.contains('responsive-sidebar-open'));
+        });
+
+        sidebarBackdrop?.addEventListener('click', () => {
+            setResponsiveSidebar(false);
+        });
+
+        window.addEventListener('resize', () => {
+            if(window.innerWidth > 1024) {
+                setResponsiveSidebar(false);
+            }
+        });
 
         // ============================================
         // NAVEGACIÓN ENTRE SECCIONES
@@ -1235,6 +1573,9 @@ unset($_SESSION['flash']);
             document.getElementById(`${section}-section`).classList.add('active');
             document.getElementById('section-title').innerHTML = document.querySelector(`[data-section="${section}"] span`).innerHTML;
             document.querySelector(`[data-section="${section}"]`).classList.add('active');
+            if(window.innerWidth <= 1024) {
+                setResponsiveSidebar(false);
+            }
         }
         
         document.querySelectorAll('.nav-item').forEach(item => {

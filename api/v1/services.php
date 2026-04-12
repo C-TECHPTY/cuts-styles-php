@@ -2,6 +2,8 @@
 // api/v1/services.php
 require_once __DIR__ . '/../../config/config.php';
 require_once __DIR__ . '/../../config/database.php';
+require_once __DIR__ . '/../../classes/MonetizationManager.php';
+require_once __DIR__ . '/../../classes/LoyaltyManager.php';
 
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
@@ -114,13 +116,11 @@ if ($method === 'POST') {
         $stmt->bindParam(':barbero_id', $barbero['id']);
 
         if ($stmt->execute() && $stmt->rowCount() > 0) {
-            $query2 = "UPDATE clientes c
-                       JOIN servicios s ON c.id = s.cliente_id
-                       SET c.puntos = c.puntos + 10
-                       WHERE s.id = :id";
-            $stmt2 = $conn->prepare($query2);
-            $stmt2->bindParam(':id', $servicioId);
-            $stmt2->execute();
+            $loyaltyManager = new LoyaltyManager($conn);
+            $loyaltyManager->awardCompletedServicePoints($servicioId);
+
+            $monetizationManager = new MonetizationManager($conn);
+            $monetizationManager->registerCompletedService($servicioId);
 
             echo json_encode(['status' => 'success', 'message' => 'Servicio completado']);
         } else {

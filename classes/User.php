@@ -2,6 +2,7 @@
 // classes/User.php
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/config.php';
+require_once __DIR__ . '/MonetizationManager.php';
 
 class User {
     public $conn;
@@ -79,6 +80,14 @@ class User {
                 $profileStmt = $this->conn->prepare($profileQuery);
                 $profileStmt->bindParam(':user_id', $this->id);
                 $profileStmt->execute();
+
+                if ($this->rol === 'barbero') {
+                    $barberId = (int) $this->conn->lastInsertId();
+                    if ($barberId > 0) {
+                        $monetizationManager = new MonetizationManager($this->conn);
+                        $monetizationManager->initializeBarberProfile($barberId);
+                    }
+                }
             }
 
             $this->conn->commit();

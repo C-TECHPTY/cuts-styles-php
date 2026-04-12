@@ -5,6 +5,7 @@ require_once 'classes/User.php';
 require_once 'classes/Service.php';
 require_once 'classes/Rewards.php';
 require_once 'classes/ServiceChat.php';
+require_once 'classes/SystemSettings.php';
 
 // Verificar autenticación
 if(!isset($_SESSION['user_id']) || $_SESSION['user_rol'] != 'cliente') {
@@ -18,6 +19,9 @@ $profile = $user->getProfile();
 $service = new Service();
 $rewards = new Rewards();
 $serviceChat = new ServiceChat();
+$settingsManager = new SystemSettings($user->conn);
+$appSettings = $settingsManager->getAll();
+$pointsPerServiceDisplay = (int) ($appSettings['loyalty_points_per_service'] ?? PUNTOS_POR_SERVICIO);
 
 // Obtener datos del cliente
 $cliente_query = "SELECT id FROM clientes WHERE user_id = :user_id";
@@ -139,7 +143,7 @@ if($cliente_id) {
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Dashboard Cliente - Cuts & Styles</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <?php include BASE_PATH . 'includes/pwa_head.php'; ?>
@@ -349,9 +353,13 @@ if($cliente_id) {
                 <a href="logout.php" class="nav-item"><i class="fas fa-sign-out-alt"></i> <span>Cerrar Sesión</span></a>
             </nav>
         </aside>
+        <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
         <main class="main-content">
             <header class="header">
+                <button type="button" class="mobile-sidebar-toggle" id="mobile-sidebar-toggle" aria-label="Abrir menu" aria-expanded="false">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <h2 id="section-title">Dashboard</h2>
                 <button class="btn btn-primary" onclick="location.reload()">
                     <i class="fas fa-sync-alt"></i> Actualizar
@@ -530,7 +538,7 @@ if($cliente_id) {
                                 <td><?php echo $servicio['tipo']; ?></td>
                                 <td><?php echo $servicio['barbero_nombre'] ?? 'N/A'; ?></td>
                                 <td><?php echo $servicio['tiempo_real'] ?? $servicio['tiempo_estimado']; ?> min</td>
-                                <td>+<?php echo PUNTOS_POR_SERVICIO; ?></td>
+                                <td>+<?php echo $pointsPerServiceDisplay; ?></td>
                                 <td><?php echo $servicio['calificacion'] ? '⭐ ' . $servicio['calificacion'] : 'Pendiente'; ?></td>
                             </tr>
                             <?php endforeach; ?>
@@ -633,6 +641,29 @@ if($cliente_id) {
     </div>
 
     <script>
+        const responsiveBody = document.body;
+        const sidebarToggle = document.getElementById('mobile-sidebar-toggle');
+        const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+
+        function setResponsiveSidebar(open) {
+            responsiveBody.classList.toggle('responsive-sidebar-open', open);
+            sidebarToggle?.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+
+        sidebarToggle?.addEventListener('click', () => {
+            setResponsiveSidebar(!responsiveBody.classList.contains('responsive-sidebar-open'));
+        });
+
+        sidebarBackdrop?.addEventListener('click', () => {
+            setResponsiveSidebar(false);
+        });
+
+        window.addEventListener('resize', () => {
+            if(window.innerWidth > 1024) {
+                setResponsiveSidebar(false);
+            }
+        });
+
         // Navegación
         document.querySelectorAll('.nav-item').forEach(item => {
             item.addEventListener('click', function(e) {
@@ -644,6 +675,9 @@ if($cliente_id) {
                     document.querySelectorAll('.section-content').forEach(content => content.classList.remove('active'));
                     document.getElementById(`${section}-section`).classList.add('active');
                     document.getElementById('section-title').innerHTML = this.querySelector('span').innerHTML;
+                    if(window.innerWidth <= 1024) {
+                        setResponsiveSidebar(false);
+                    }
                 }
             });
         });

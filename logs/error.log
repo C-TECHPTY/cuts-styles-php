@@ -14,3 +14,8 @@
 [2026-04-11 18:18:48] Email o contraseña incorrectos en C:\xampp\htdocs\cuts-styles-php\login.php:67
 [2026-04-11 18:53:14] Email o contraseña incorrectos en C:\xampp\htdocs\cuts-styles-php\login.php:67
 [2026-04-11 18:57:08] Email o contraseña incorrectos en C:\xampp\htdocs\cuts-styles-php\login.php:67
+[2026-04-11 22:06:41] Token CSRF invalido en C:\xampp\htdocs\cuts-styles-php\login.php:67
+[2026-04-11 23:42:15] No se pudieron asignar puntos: There is already an active transaction en C:\xampp\htdocs\cuts-styles-php\classes\LoyaltyManager.php:93
+[2026-04-11 23:42:15] Error completando servicio: There is no active transaction en C:\xampp\htdocs\cuts-styles-php\classes\Service.php:106
+[2026-04-11 23:42:39] No se pudieron asignar puntos: There is already an active transaction en C:\xampp\htdocs\cuts-styles-php\classes\LoyaltyManager.php:93
+[2026-04-11 23:42:39] Error completando servicio: There is no active transaction en C:\xampp\htdocs\cuts-styles-php\classes\Service.php:106

@@ -3,6 +3,8 @@
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/ServiceChat.php';
+require_once __DIR__ . '/MonetizationManager.php';
+require_once __DIR__ . '/LoyaltyManager.php';
 
 class Service {
     public $conn;
@@ -174,19 +176,10 @@ class Service {
     }
 
     private function actualizarPuntos($servicio_id) {
-        $query = "SELECT cliente_id FROM servicios WHERE id = :id";
-        $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(':id', $servicio_id);
-        $stmt->execute();
-        $servicio = $stmt->fetch(PDO::FETCH_ASSOC);
+        $loyaltyManager = new LoyaltyManager($this->conn);
+        $loyaltyManager->awardCompletedServicePoints((int) $servicio_id);
 
-        if ($servicio) {
-            $puntos = PUNTOS_POR_SERVICIO;
-            $update = "UPDATE clientes SET puntos = puntos + :puntos WHERE id = :cliente_id";
-            $stmt2 = $this->conn->prepare($update);
-            $stmt2->bindParam(':puntos', $puntos);
-            $stmt2->bindParam(':cliente_id', $servicio['cliente_id']);
-            $stmt2->execute();
-        }
+        $monetizationManager = new MonetizationManager($this->conn);
+        $monetizationManager->registerCompletedService((int) $servicio_id);
     }
 }
