@@ -151,6 +151,82 @@ class ServiceChat {
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
+    public function getMessagesAfterIdForUser(int $serviceId, int $userId, string $role, int $afterId = 0): array {
+        $context = $this->getChatContextForUser($serviceId, $userId, $role);
+        if (!$context || !$context['chat']) {
+            return [];
+        }
+
+        $this->markMessagesDelivered($serviceId, $userId, $role);
+        $this->markMessagesRead($serviceId, $userId, $role);
+
+        $query = "SELECT m.*, u.nombre as sender_name
+                  FROM service_chat_messages m
+                  LEFT JOIN users u ON m.sender_user_id = u.id
+                  WHERE m.chat_id = :chat_id AND m.id > :after_id
+                  ORDER BY m.created_at ASC, m.id ASC";
+        $stmt = $this->conn->prepare($query);
+        $stmt->bindParam(':chat_id', $context['chat']['id']);
+        $stmt->bindParam(':after_id', $afterId);
+        $stmt->execute();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function markMessagesDelivered(int $serviceId, int $userId, string $role): void {
+        $context = $this->getChatContextForUser($serviceId, $userId, $role);
+        if (!$context || !$context['chat']) {
+            return;
+        }
+
+        $query = "UPDATE service_chat_messages
+                  SET delivered_at = COALESCE(delivered_at, NOW())
+                  WHERE chat_id = :chat_id
+                    AND sender_role <> :role
+                    AND sender_role <> 'system'
+                    AND delivered_at IS NULL";
+        $stmt = $this->conn->prepare($query);
+        $stmt->bindParam(':chat_id', $context['chat']['id']);
+        $stmt->bindParam(':role', $role);
+        $stmt->execute();
+    }
+
+    public function markMessagesRead(int $serviceId, int $userId, string $role): void {
+        $context = $this->getChatContextForUser($serviceId, $userId, $role);
+        if (!$context || !$context['chat']) {
+            return;
+        }
+
+        $query = "UPDATE service_chat_messages
+                  SET delivered_at = COALESCE(delivered_at, NOW()),
+                      read_at = COALESCE(read_at, NOW())
+                  WHERE chat_id = :chat_id
+                    AND sender_role <> :role
+                    AND sender_role <> 'system'
+                    AND read_at IS NULL";
+        $stmt = $this->conn->prepare($query);
+        $stmt->bindParam(':chat_id', $context['chat']['id']);
+        $stmt->bindParam(':role', $role);
+        $stmt->execute();
+    }
+
+    public function getMessageStatusSummary(int $messageId): ?array {
+        $query = "SELECT id, delivered_at, read_at FROM service_chat_messages WHERE id = :id LIMIT 1";
+        $stmt = $this->conn->prepare($query);
+        $stmt->bindParam(':id', $messageId);
+        $stmt->execute();
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $row['id'],
+            'status' => $this->resolveMessageStatus($row),
+            'delivered_at' => $row['delivered_at'],
+            'read_at' => $row['read_at'],
+        ];
+    }
+
     public function openChatForService(int $serviceId): bool {
         $context = $this->getServiceContext($serviceId);
         if (!$context || empty($context['barbero_id'])) {
@@ -264,13 +340,19 @@ class ServiceChat {
         $stmt->bindParam(':preset_key', $presetKey);
         $stmt->bindParam(':message_text', $cleanMessage);
         $stmt->execute();
+        $messageId = (int) $this->conn->lastInsertId();
 
         $update = "UPDATE service_chats SET last_message_at = NOW() WHERE id = :id";
         $stmt2 = $this->conn->prepare($update);
         $stmt2->bindParam(':id', $context['chat']['id']);
         $stmt2->execute();
 
-        return ['success' => true, 'message' => 'Mensaje enviado.'];
+        return [
+            'success' => true,
+            'message' => 'Mensaje enviado.',
+            'message_id' => $messageId,
+            'message_status' => $this->getMessageStatusSummary($messageId),
+        ];
     }
 
     public function reportAbuse(int $serviceId, int $userId, string $role, string $reason, string $details = ''): array {
@@ -588,6 +670,35 @@ class ServiceChat {
         $stmt->bindParam(':incident_type', $incidentType);
         $stmt->bindParam(':details', $details);
         $stmt->execute();
+    }
+
+    public function serializeMessage(array $message, int $currentUserId): array {
+        return [
+            'id' => (int) $message['id'],
+            'chat_id' => (int) $message['chat_id'],
+            'sender_user_id' => (int) $message['sender_user_id'],
+            'sender_role' => $message['sender_role'],
+            'sender_name' => $message['sender_role'] === 'system' ? 'Sistema' : ($message['sender_name'] ?? 'Usuario'),
+            'message_type' => $message['message_type'],
+            'preset_key' => $message['preset_key'],
+            'message_text' => $message['message_text'],
+            'created_at' => $message['created_at'],
+            'delivered_at' => $message['delivered_at'] ?? null,
+            'read_at' => $message['read_at'] ?? null,
+            'status' => $this->resolveMessageStatus($message),
+            'is_mine' => (int) $message['sender_user_id'] === $currentUserId,
+            'is_system' => ($message['sender_role'] ?? '') === 'system',
+        ];
+    }
+
+    private function resolveMessageStatus(array $message): string {
+        if (!empty($message['read_at'])) {
+            return 'read';
+        }
+        if (!empty($message['delivered_at'])) {
+            return 'delivered';
+        }
+        return 'sent';
     }
 }
 ?>
