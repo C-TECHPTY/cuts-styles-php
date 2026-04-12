@@ -23,6 +23,7 @@ $galeria_imagenes = $producto['imagenes'] ?? [];
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo htmlspecialchars($producto['nombre']); ?> - Cuts & Styles</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <?php include BASE_PATH . 'includes/pwa_head.php'; ?>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fancyapps/ui@5.0/dist/fancybox/fancybox.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -388,5 +389,6 @@ $galeria_imagenes = $producto['imagenes'] ?? [];
         // Inicializar
         actualizarCantidad();
     </script>
+    <?php include BASE_PATH . 'includes/pwa_register.php'; ?>
 </body>
 </html>

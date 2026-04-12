@@ -327,6 +327,7 @@ unset($_SESSION['flash']);
     <title>Admin Dashboard - Cuts & Styles</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <?php include BASE_PATH . 'includes/pwa_head.php'; ?>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
@@ -1474,5 +1475,6 @@ unset($_SESSION['flash']);
             }
         }
     </script>
+    <?php include BASE_PATH . 'includes/pwa_register.php'; ?>
 </body>
 </html>

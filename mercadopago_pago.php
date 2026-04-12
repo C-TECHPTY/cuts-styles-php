@@ -39,6 +39,7 @@ $_SESSION['mercadopago_tokens'][$pedido_id] = $paymentToken;
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Procesando pago - Cuts & Styles</title>
+    <?php include BASE_PATH . 'includes/pwa_head.php'; ?>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -111,5 +112,6 @@ $_SESSION['mercadopago_tokens'][$pedido_id] = $paymentToken;
             <a href="cliente.php" class="btn btn-secondary">Volver al dashboard</a>
         </div>
     </div>
+    <?php include BASE_PATH . 'includes/pwa_register.php'; ?>
 </body>
 </html>
