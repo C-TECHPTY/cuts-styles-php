@@ -105,6 +105,13 @@ class Service {
             $stmt->execute();
 
             if ($stmt->rowCount() === 0) {
+                $currentStatus = $this->getServiceStatus((int) $servicio_id);
+                logError(
+                    'No se pudo completar servicio porque el UPDATE no encontro fila. servicio_id=' . (int) $servicio_id .
+                    ', estado_actual=' . ($currentStatus ?: 'no_encontrado'),
+                    __FILE__,
+                    __LINE__
+                );
                 $this->conn->rollBack();
                 return false;
             }
@@ -116,13 +123,24 @@ class Service {
             } catch (Throwable $e) {
                 logError('No se pudo cerrar el chat del servicio: ' . $e->getMessage(), __FILE__, __LINE__);
             }
+
+            if (!$this->conn->inTransaction()) {
+                throw new RuntimeException('La transaccion principal del servicio se cerro inesperadamente antes del commit.');
+            }
+
             $this->conn->commit();
             return true;
         } catch (Throwable $e) {
             if ($this->conn->inTransaction()) {
                 $this->conn->rollBack();
             }
-            logError('Error completando servicio: ' . $e->getMessage(), __FILE__, __LINE__);
+            logError(
+                'Error completando servicio. servicio_id=' . (int) $servicio_id .
+                ', duracion_real=' . (string) $duracion_real .
+                ', error=' . $e->getMessage(),
+                __FILE__,
+                __LINE__
+            );
             return false;
         }
     }
@@ -195,10 +213,36 @@ class Service {
     }
 
     private function actualizarPuntos($servicio_id) {
-        $loyaltyManager = new LoyaltyManager($this->conn);
-        $loyaltyManager->awardCompletedServicePoints((int) $servicio_id);
+        try {
+            $loyaltyManager = new LoyaltyManager($this->conn);
+            $awardedPoints = $loyaltyManager->awardCompletedServicePoints((int) $servicio_id);
+            if ($awardedPoints === 0) {
+                logError('Completar servicio sin puntos nuevos o con modulo de puntos no disponible. servicio_id=' . (int) $servicio_id, __FILE__, __LINE__);
+            }
+        } catch (Throwable $e) {
+            logError('Fallo secundario asignando puntos al completar servicio. servicio_id=' . (int) $servicio_id . ', error=' . $e->getMessage(), __FILE__, __LINE__);
+        }
 
-        $monetizationManager = new MonetizationManager($this->conn);
-        $monetizationManager->registerCompletedService((int) $servicio_id);
+        try {
+            $monetizationManager = new MonetizationManager($this->conn);
+            $registered = $monetizationManager->registerCompletedService((int) $servicio_id);
+            if (!$registered) {
+                logError('Completar servicio sin registro monetizable nuevo o con modulo no disponible. servicio_id=' . (int) $servicio_id, __FILE__, __LINE__);
+            }
+        } catch (Throwable $e) {
+            logError('Fallo secundario registrando monetizacion del servicio. servicio_id=' . (int) $servicio_id . ', error=' . $e->getMessage(), __FILE__, __LINE__);
+        }
+    }
+
+    private function getServiceStatus(int $serviceId): ?string {
+        try {
+            $stmt = $this->conn->prepare("SELECT estado FROM servicios WHERE id = :service_id LIMIT 1");
+            $stmt->bindValue(':service_id', $serviceId, PDO::PARAM_INT);
+            $stmt->execute();
+            $status = $stmt->fetchColumn();
+            return $status !== false ? (string) $status : null;
+        } catch (Throwable $e) {
+            return null;
+        }
     }
 }

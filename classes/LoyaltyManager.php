@@ -53,7 +53,10 @@ class LoyaltyManager {
                 return 0;
             }
 
-            $this->conn->beginTransaction();
+            $ownsTransaction = !$this->conn->inTransaction();
+            if ($ownsTransaction) {
+                $this->conn->beginTransaction();
+            }
 
             $update = $this->conn->prepare("UPDATE clientes SET puntos = puntos + :points WHERE id = :cliente_id");
             $update->bindValue(':points', $totalPoints, PDO::PARAM_INT);
@@ -83,10 +86,12 @@ class LoyaltyManager {
             $history->bindValue(':balance_despues', $balance, PDO::PARAM_INT);
             $history->execute();
 
-            $this->conn->commit();
+            if ($ownsTransaction && $this->conn->inTransaction()) {
+                $this->conn->commit();
+            }
             return $totalPoints;
         } catch (Throwable $e) {
-            if ($this->conn->inTransaction()) {
+            if (!empty($ownsTransaction) && $this->conn->inTransaction()) {
                 $this->conn->rollBack();
             }
             if (function_exists('logError')) {

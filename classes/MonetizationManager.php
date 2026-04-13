@@ -299,7 +299,10 @@ class MonetizationManager {
 
         try {
             $this->initializeBarberProfile($barberoId);
-            $this->conn->beginTransaction();
+            $ownsTransaction = !$this->conn->inTransaction();
+            if ($ownsTransaction) {
+                $this->conn->beginTransaction();
+            }
 
             $expireCurrent = $this->conn->prepare("UPDATE barber_subscriptions
                 SET status = 'expired', updated_at = NOW()
@@ -508,10 +511,12 @@ class MonetizationManager {
             $insertPaymentState->bindValue(':notes', 'Base preparada para futura retencion/liberacion de pagos');
             $insertPaymentState->execute();
 
-            $this->conn->commit();
+            if ($ownsTransaction && $this->conn->inTransaction()) {
+                $this->conn->commit();
+            }
             return true;
         } catch (Throwable $e) {
-            if ($this->conn->inTransaction()) {
+            if (!empty($ownsTransaction) && $this->conn->inTransaction()) {
                 $this->conn->rollBack();
             }
             if (function_exists('logError')) {
