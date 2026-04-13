@@ -5,6 +5,7 @@ require_once __DIR__ . '/../classes/User.php';
 require_once __DIR__ . '/../classes/Service.php';
 require_once __DIR__ . '/../classes/Verification.php';
 require_once __DIR__ . '/../classes/Product.php';
+require_once __DIR__ . '/../classes/Rewards.php';
 require_once __DIR__ . '/../classes/SystemSettings.php';
 require_once __DIR__ . '/../classes/MonetizationManager.php';
 require_once __DIR__ . '/../classes/LoyaltyManager.php';
@@ -19,9 +20,11 @@ $user = new User();
 $service = new Service();
 $verification = new Verification();
 $productClass = new Product();
+$rewardsManager = new Rewards();
 $settingsManager = new SystemSettings($user->conn);
 $monetizationManager = new MonetizationManager($user->conn);
 $loyaltyManager = new LoyaltyManager($user->conn);
+$monetizationManager->initializeAllBarberProfiles();
 $monetizationManager->refreshBarberStatuses();
 
 // ============================================
@@ -167,6 +170,48 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
         header("Location: " . BASE_URL . "admin/dashboard.php#productos");
         exit();
     }
+
+    if(isset($_POST['guardar_recompensa'])) {
+        $result = $rewardsManager->guardarRecompensa([
+            'id' => $_POST['recompensa_id'] ?? 0,
+            'nombre' => $_POST['recompensa_nombre'] ?? '',
+            'descripcion' => $_POST['recompensa_descripcion'] ?? '',
+            'puntos_requeridos' => $_POST['recompensa_puntos'] ?? 0,
+            'stock' => $_POST['recompensa_stock'] ?? 0,
+            'is_active' => isset($_POST['recompensa_activa']) ? 1 : 0,
+        ]);
+        $_SESSION['flash'] = [
+            'type' => $result['success'] ? 'success' : 'danger',
+            'message' => $result['message']
+        ];
+        header("Location: " . BASE_URL . "admin/dashboard.php#clientes");
+        exit();
+    }
+
+    if(isset($_POST['ajustar_puntos_cliente'])) {
+        $clienteId = (int) ($_POST['cliente_id'] ?? 0);
+        $pointsDelta = (int) ($_POST['ajuste_puntos'] ?? 0);
+        $description = trim((string) ($_POST['ajuste_descripcion'] ?? 'Ajuste manual de puntos'));
+        $result = $rewardsManager->ajustarPuntosCliente($clienteId, $pointsDelta, $description);
+        $_SESSION['flash'] = [
+            'type' => $result['success'] ? 'success' : 'danger',
+            'message' => $result['message']
+        ];
+        header("Location: " . BASE_URL . "admin/dashboard.php#clientes");
+        exit();
+    }
+
+    if(isset($_POST['toggle_recompensa'])) {
+        $rewardId = (int) ($_POST['recompensa_id'] ?? 0);
+        $isActive = (int) ($_POST['is_active'] ?? 0);
+        $result = $rewardsManager->cambiarEstadoRecompensa($rewardId, $isActive);
+        $_SESSION['flash'] = [
+            'type' => $result['success'] ? 'success' : 'danger',
+            'message' => $result['message']
+        ];
+        header("Location: " . BASE_URL . "admin/dashboard.php#clientes");
+        exit();
+    }
     
     // Verificar barbero
     if(isset($_POST['verificar_barbero'])) {
@@ -198,6 +243,30 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
         header("Location: " . BASE_URL . "admin/dashboard.php#barberos");
         exit();
     }
+
+    if(isset($_POST['activar_suscripcion_barbero'])) {
+        $barberoId = (int) ($_POST['barbero_id'] ?? 0);
+        $planType = $_POST['plan_type'] ?? 'monthly';
+        $result = $monetizationManager->activateSubscription($barberoId, $planType);
+        $_SESSION['flash'] = [
+            'type' => $result['success'] ? 'success' : 'danger',
+            'message' => $result['message']
+        ];
+        header("Location: " . BASE_URL . "admin/dashboard.php#configuracion");
+        exit();
+    }
+
+    if(isset($_POST['cancelar_suscripcion_barbero'])) {
+        $barberoId = (int) ($_POST['barbero_id'] ?? 0);
+        $result = $monetizationManager->cancelActiveSubscription($barberoId);
+        $_SESSION['flash'] = [
+            'type' => $result['success'] ? 'success' : 'danger',
+            'message' => $result['message']
+        ];
+        header("Location: " . BASE_URL . "admin/dashboard.php#configuracion");
+        exit();
+    }
+
     // Guardar configuracion extendida
     if(isset($_POST['guardar_config'])) {
         $trialDays = (int) ($_POST['barber_trial_days'] ?? 15);
@@ -208,6 +277,11 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
         $paymentStatus = $_POST['future_default_payment_status'] ?? 'pending';
         if (!in_array($paymentStatus, ['pending', 'held', 'released', 'refunded', 'disputed'], true)) {
             $paymentStatus = 'pending';
+        }
+
+        $zoneMatchingMode = $_POST['zone_matching_mode'] ?? 'preferred';
+        if (!in_array($zoneMatchingMode, ['preferred', 'strict'], true)) {
+            $zoneMatchingMode = 'preferred';
         }
 
         $saved = $settingsManager->setMany([
@@ -228,6 +302,27 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
             'loyalty_reward_value' => number_format((float) ($_POST['loyalty_reward_value'] ?? 0), 2, '.', ''),
             'future_payment_hold_enabled' => isset($_POST['future_payment_hold_enabled']) ? '1' : '0',
             'future_default_payment_status' => $paymentStatus,
+            'zone_matching_enabled' => isset($_POST['zone_matching_enabled']) ? '1' : '0',
+            'zone_matching_mode' => $zoneMatchingMode,
+            'zone_require_service_zone' => isset($_POST['zone_require_service_zone']) ? '1' : '0',
+            'zone_allow_multi_sector_barber' => isset($_POST['zone_allow_multi_sector_barber']) ? '1' : '0',
+            'notifications_realtime_enabled' => isset($_POST['notifications_realtime_enabled']) ? '1' : '0',
+            'notifications_sound_enabled' => isset($_POST['notifications_sound_enabled']) ? '1' : '0',
+            'notifications_vibration_enabled' => isset($_POST['notifications_vibration_enabled']) ? '1' : '0',
+            'notifications_zone_request_alerts' => isset($_POST['notifications_zone_request_alerts']) ? '1' : '0',
+            'notifications_prepare_push' => isset($_POST['notifications_prepare_push']) ? '1' : '0',
+            'trust_reports_enabled' => isset($_POST['trust_reports_enabled']) ? '1' : '0',
+            'trust_barber_blocks_enabled' => isset($_POST['trust_barber_blocks_enabled']) ? '1' : '0',
+            'trust_behavior_score_enabled' => isset($_POST['trust_behavior_score_enabled']) ? '1' : '0',
+            'trust_fraud_watch_enabled' => isset($_POST['trust_fraud_watch_enabled']) ? '1' : '0',
+            'trust_payment_disputes_enabled' => isset($_POST['trust_payment_disputes_enabled']) ? '1' : '0',
+            'pwa_install_enabled' => isset($_POST['pwa_install_enabled']) ? '1' : '0',
+            'pwa_offline_enabled' => isset($_POST['pwa_offline_enabled']) ? '1' : '0',
+            'ui_mobile_compact_enabled' => isset($_POST['ui_mobile_compact_enabled']) ? '1' : '0',
+            'admin_config_panels_enabled' => isset($_POST['admin_config_panels_enabled']) ? '1' : '0',
+            'admin_dashboard_show_finance' => isset($_POST['admin_dashboard_show_finance']) ? '1' : '0',
+            'admin_dashboard_show_loyalty' => isset($_POST['admin_dashboard_show_loyalty']) ? '1' : '0',
+            'admin_dashboard_show_incidents' => isset($_POST['admin_dashboard_show_incidents']) ? '1' : '0',
         ]);
 
         $_SESSION['flash'] = [
@@ -411,7 +506,7 @@ if ($monetizationManager->hasTable('barber_monetization_profiles')) {
         }
     }
 
-    $barbersStatusResult = $user->conn->query("SELECT u.nombre, u.email, bmp.status, bmp.trial_start_date, bmp.trial_end_date, bmp.subscription_ends_at
+    $barbersStatusResult = $user->conn->query("SELECT b.id AS barbero_id, u.nombre, u.email, bmp.status, bmp.trial_start_date, bmp.trial_end_date, bmp.subscription_ends_at
         FROM barber_monetization_profiles bmp
         JOIN barberos b ON bmp.barber_id = b.id
         JOIN users u ON b.user_id = u.id
@@ -439,6 +534,9 @@ $currentBalanceResult = $user->conn->query("SELECT COALESCE(SUM(puntos), 0) AS t
 if ($currentBalanceResult) {
     $pointsStats['current_balance'] = (int) (($currentBalanceResult->fetch(PDO::FETCH_ASSOC) ?: [])['total'] ?? 0);
 }
+
+$recompensasAdmin = $rewardsManager->getRecompensasAdmin();
+$pointsHistoryAdmin = $rewardsManager->getHistorialPuntosAdmin(40);
 
 // Flash message
 $flash = isset($_SESSION['flash']) ? $_SESSION['flash'] : null;
@@ -1201,6 +1299,109 @@ unset($_SESSION['flash']);
                     </table>
                     <?php endif; ?>
                 </div>
+
+                <div class="card" style="margin-top: 24px;">
+                    <div class="card-header"><h3><i class="fas fa-gift"></i> Recompensas y Ajustes de Puntos</h3></div>
+                    <div class="card-body">
+                        <div class="config-section">
+                            <h4><i class="fas fa-plus-circle"></i> Crear o Actualizar Recompensa</h4>
+                            <form method="POST">
+                                <?php echo csrf_field(); ?>
+                                <div class="config-row">
+                                    <input type="hidden" name="recompensa_id" value="0">
+                                    <div class="form-group"><label>Nombre</label><input type="text" name="recompensa_nombre" placeholder="Ej: Corte gratis" required></div>
+                                    <div class="form-group"><label>Descripcion</label><input type="text" name="recompensa_descripcion" placeholder="Descripcion corta de la recompensa"></div>
+                                    <div class="form-group"><label>Puntos requeridos</label><input type="number" min="1" name="recompensa_puntos" required></div>
+                                    <div class="form-group"><label>Stock</label><input type="number" min="0" name="recompensa_stock" value="0"></div>
+                                    <div class="form-group"><label><input type="checkbox" name="recompensa_activa" value="1" checked> Recompensa activa</label></div>
+                                </div>
+                                <div style="text-align:right;">
+                                    <button type="submit" name="guardar_recompensa" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Recompensa</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <div class="config-section">
+                            <h4><i class="fas fa-sliders-h"></i> Ajuste Manual de Puntos</h4>
+                            <form method="POST">
+                                <?php echo csrf_field(); ?>
+                                <div class="config-row">
+                                    <div class="form-group">
+                                        <label>Cliente</label>
+                                        <select name="cliente_id" required>
+                                            <option value="">Seleccionar cliente</option>
+                                            <?php foreach($todos_clientes as $cliente): ?>
+                                                <option value="<?php echo (int) $cliente['id']; ?>"><?php echo htmlspecialchars(($cliente['nombre'] ?? 'Sin nombre') . ' - ' . $cliente['email']); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <div class="form-group"><label>Puntos a sumar o restar</label><input type="number" name="ajuste_puntos" placeholder="Ej: 25 o -10" required></div>
+                                    <div class="form-group"><label>Descripcion</label><input type="text" name="ajuste_descripcion" placeholder="Motivo del ajuste manual" required></div>
+                                </div>
+                                <div style="text-align:right;">
+                                    <button type="submit" name="ajustar_puntos_cliente" class="btn btn-warning"><i class="fas fa-balance-scale"></i> Aplicar Ajuste</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <div class="config-section">
+                            <h4><i class="fas fa-list"></i> Catalogo de Recompensas</h4>
+                            <div class="table-container">
+                                <table class="table">
+                                    <thead><tr><th>Nombre</th><th>Puntos</th><th>Stock</th><th>Estado</th><th>Descripcion</th><th>Accion rapida</th></tr></thead>
+                                    <tbody>
+                                        <?php if(empty($recompensasAdmin)): ?>
+                                            <tr><td colspan="6" style="text-align:center;">No hay recompensas registradas.</td></tr>
+                                        <?php else: ?>
+                                            <?php foreach($recompensasAdmin as $rewardAdmin): ?>
+                                            <tr>
+                                                <td><?php echo htmlspecialchars($rewardAdmin['nombre']); ?></td>
+                                                <td><?php echo (int) $rewardAdmin['puntos_requeridos']; ?></td>
+                                                <td><?php echo (int) $rewardAdmin['stock']; ?></td>
+                                                <td><span class="badge <?php echo !empty($rewardAdmin['is_active']) ? 'badge-success' : 'badge-danger'; ?>"><?php echo !empty($rewardAdmin['is_active']) ? 'Activa' : 'Inactiva'; ?></span></td>
+                                                <td><?php echo htmlspecialchars($rewardAdmin['descripcion'] ?? ''); ?></td>
+                                                <td>
+                                                    <form method="POST" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                                                        <?php echo csrf_field(); ?>
+                                                        <input type="hidden" name="recompensa_id" value="<?php echo (int) $rewardAdmin['id']; ?>">
+                                                        <input type="hidden" name="is_active" value="<?php echo !empty($rewardAdmin['is_active']) ? 0 : 1; ?>">
+                                                        <button type="submit" name="toggle_recompensa" class="btn btn-warning btn-sm"><i class="fas fa-power-off"></i> <?php echo !empty($rewardAdmin['is_active']) ? 'Desactivar' : 'Activar'; ?></button>
+                                                    </form>
+                                                </td>
+                                            </tr>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="config-section">
+                            <h4><i class="fas fa-history"></i> Historial Reciente de Puntos</h4>
+                            <div class="table-container">
+                                <table class="table">
+                                    <thead><tr><th>Fecha</th><th>Cliente</th><th>Movimiento</th><th>Puntos</th><th>Descripcion</th><th>Saldo</th></tr></thead>
+                                    <tbody>
+                                        <?php if(empty($pointsHistoryAdmin)): ?>
+                                            <tr><td colspan="6" style="text-align:center;">No hay historial de puntos disponible.</td></tr>
+                                        <?php else: ?>
+                                            <?php foreach($pointsHistoryAdmin as $historyRow): ?>
+                                            <tr>
+                                                <td><?php echo !empty($historyRow['fecha']) ? date('d/m/Y H:i', strtotime($historyRow['fecha'])) : '-'; ?></td>
+                                                <td><?php echo htmlspecialchars(($historyRow['cliente_nombre'] ?? 'Sin nombre') . ' / ' . ($historyRow['cliente_email'] ?? '')); ?></td>
+                                                <td><?php echo htmlspecialchars($historyRow['tipo_movimiento'] ?? ($historyRow['tipo'] ?? '')); ?></td>
+                                                <td><?php echo (int) ($historyRow['puntos'] ?? 0); ?></td>
+                                                <td><?php echo htmlspecialchars($historyRow['descripcion'] ?? ($historyRow['recompensa_nombre'] ?? $historyRow['servicio_tipo'] ?? '')); ?></td>
+                                                <td><?php echo isset($historyRow['balance_despues']) ? (int) $historyRow['balance_despues'] : '-'; ?></td>
+                                            </tr>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <!-- ============================================ -->
@@ -1293,6 +1494,53 @@ unset($_SESSION['flash']);
                                     <div class="form-group"><label>Valor de recompensa</label><input type="number" min="0" step="0.01" name="loyalty_reward_value" value="<?php echo htmlspecialchars($appSettings['loyalty_reward_value'] ?? '10'); ?>"></div>
                                 </div>
                             </div>
+                            <div class="config-section">
+                                <h4><i class="fas fa-map-marked-alt"></i> Matching por Zona</h4>
+                                <div class="config-row">
+                                    <div class="form-group"><label><input type="checkbox" name="zone_matching_enabled" value="1" <?php echo !empty($appSettings['zone_matching_enabled']) ? 'checked' : ''; ?>> Activar matching por zona</label></div>
+                                    <div class="form-group">
+                                        <label>Modo de asignacion</label>
+                                        <select name="zone_matching_mode">
+                                            <option value="preferred" <?php echo ($appSettings['zone_matching_mode'] ?? 'preferred') === 'preferred' ? 'selected' : ''; ?>>Preferir misma zona</option>
+                                            <option value="strict" <?php echo ($appSettings['zone_matching_mode'] ?? '') === 'strict' ? 'selected' : ''; ?>>Solo misma zona</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group"><label><input type="checkbox" name="zone_require_service_zone" value="1" <?php echo !empty($appSettings['zone_require_service_zone']) ? 'checked' : ''; ?>> Exigir zona en nuevas solicitudes</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="zone_allow_multi_sector_barber" value="1" <?php echo !empty($appSettings['zone_allow_multi_sector_barber']) ? 'checked' : ''; ?>> Permitir varios sectores por barbero</label></div>
+                                </div>
+                            </div>
+                            <div class="config-section">
+                                <h4><i class="fas fa-bell"></i> Notificaciones y Tiempo Real</h4>
+                                <div class="config-row">
+                                    <div class="form-group"><label><input type="checkbox" name="notifications_realtime_enabled" value="1" <?php echo !empty($appSettings['notifications_realtime_enabled']) ? 'checked' : ''; ?>> Habilitar tiempo real por polling/refresh ligero</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="notifications_sound_enabled" value="1" <?php echo !empty($appSettings['notifications_sound_enabled']) ? 'checked' : ''; ?>> Sonido opcional</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="notifications_vibration_enabled" value="1" <?php echo !empty($appSettings['notifications_vibration_enabled']) ? 'checked' : ''; ?>> Vibracion en movil</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="notifications_zone_request_alerts" value="1" <?php echo !empty($appSettings['notifications_zone_request_alerts']) ? 'checked' : ''; ?>> Alertas de solicitud por zona</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="notifications_prepare_push" value="1" <?php echo !empty($appSettings['notifications_prepare_push']) ? 'checked' : ''; ?>> Preparar futura push notification</label></div>
+                                </div>
+                            </div>
+                            <div class="config-section">
+                                <h4><i class="fas fa-shield-alt"></i> Confianza y Seguridad</h4>
+                                <div class="config-row">
+                                    <div class="form-group"><label><input type="checkbox" name="trust_reports_enabled" value="1" <?php echo !empty($appSettings['trust_reports_enabled']) ? 'checked' : ''; ?>> Reportes e incidentes</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="trust_barber_blocks_enabled" value="1" <?php echo !empty($appSettings['trust_barber_blocks_enabled']) ? 'checked' : ''; ?>> Bloqueos cliente-barbero</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="trust_behavior_score_enabled" value="1" <?php echo !empty($appSettings['trust_behavior_score_enabled']) ? 'checked' : ''; ?>> Score de comportamiento</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="trust_fraud_watch_enabled" value="1" <?php echo !empty($appSettings['trust_fraud_watch_enabled']) ? 'checked' : ''; ?>> Vigilancia antifraude</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="trust_payment_disputes_enabled" value="1" <?php echo !empty($appSettings['trust_payment_disputes_enabled']) ? 'checked' : ''; ?>> Base para disputas de pago</label></div>
+                                </div>
+                            </div>
+                            <div class="config-section">
+                                <h4><i class="fas fa-mobile-alt"></i> PWA, Responsive y Admin</h4>
+                                <div class="config-row">
+                                    <div class="form-group"><label><input type="checkbox" name="pwa_install_enabled" value="1" <?php echo !empty($appSettings['pwa_install_enabled']) ? 'checked' : ''; ?>> Permitir instalacion PWA</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="pwa_offline_enabled" value="1" <?php echo !empty($appSettings['pwa_offline_enabled']) ? 'checked' : ''; ?>> Mantener soporte offline</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="ui_mobile_compact_enabled" value="1" <?php echo !empty($appSettings['ui_mobile_compact_enabled']) ? 'checked' : ''; ?>> UI compacta para movil</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="admin_config_panels_enabled" value="1" <?php echo !empty($appSettings['admin_config_panels_enabled']) ? 'checked' : ''; ?>> Paneles configurables</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="admin_dashboard_show_finance" value="1" <?php echo !empty($appSettings['admin_dashboard_show_finance']) ? 'checked' : ''; ?>> Mostrar panel financiero</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="admin_dashboard_show_loyalty" value="1" <?php echo !empty($appSettings['admin_dashboard_show_loyalty']) ? 'checked' : ''; ?>> Mostrar panel de puntos</label></div>
+                                    <div class="form-group"><label><input type="checkbox" name="admin_dashboard_show_incidents" value="1" <?php echo !empty($appSettings['admin_dashboard_show_incidents']) ? 'checked' : ''; ?>> Mostrar panel de incidentes</label></div>
+                                </div>
+                            </div>
                             <div style="text-align: right;"><button type="submit" name="guardar_config" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Configuracion</button></div>
                         </form>
 
@@ -1317,10 +1565,10 @@ unset($_SESSION['flash']);
                             <div class="table-container">
                                 <div class="table-header"><h3>Barberos y estado actual</h3></div>
                                 <table class="table">
-                                    <thead><tr><th>Barbero</th><th>Email</th><th>Estado</th><th>Trial inicio</th><th>Trial fin</th><th>Suscripcion</th></tr></thead>
+                                    <thead><tr><th>Barbero</th><th>Email</th><th>Estado</th><th>Trial inicio</th><th>Trial fin</th><th>Suscripcion</th><th>Acciones</th></tr></thead>
                                     <tbody>
                                         <?php if(empty($barbersMonetizationList)): ?>
-                                            <tr><td colspan="6" style="text-align:center;">No hay datos monetizables todavia. Ejecuta la migracion para habilitarlos.</td></tr>
+                                            <tr><td colspan="7" style="text-align:center;">No hay datos monetizables todavia. Ejecuta la migracion para habilitarlos.</td></tr>
                                         <?php else: ?>
                                             <?php foreach($barbersMonetizationList as $billingBarber): ?>
                                             <tr>
@@ -1330,6 +1578,22 @@ unset($_SESSION['flash']);
                                                 <td><?php echo !empty($billingBarber['trial_start_date']) ? date('d/m/Y', strtotime($billingBarber['trial_start_date'])) : '-'; ?></td>
                                                 <td><?php echo !empty($billingBarber['trial_end_date']) ? date('d/m/Y', strtotime($billingBarber['trial_end_date'])) : '-'; ?></td>
                                                 <td><?php echo !empty($billingBarber['subscription_ends_at']) ? date('d/m/Y', strtotime($billingBarber['subscription_ends_at'])) : '-'; ?></td>
+                                                <td>
+                                                    <form method="POST" style="display:flex; gap:8px; flex-wrap:wrap;">
+                                                        <?php echo csrf_field(); ?>
+                                                        <input type="hidden" name="barbero_id" value="<?php echo (int) $billingBarber['barbero_id']; ?>">
+                                                        <select name="plan_type" style="padding:8px; border:1px solid #ddd; border-radius:6px; min-width:110px;">
+                                                            <option value="monthly">Mensual</option>
+                                                            <option value="annual">Anual</option>
+                                                        </select>
+                                                        <button type="submit" name="activar_suscripcion_barbero" class="btn btn-success btn-sm">
+                                                            <i class="fas fa-bolt"></i> Activar
+                                                        </button>
+                                                        <button type="submit" name="cancelar_suscripcion_barbero" class="btn btn-warning btn-sm">
+                                                            <i class="fas fa-ban"></i> Cancelar
+                                                        </button>
+                                                    </form>
+                                                </td>
                                             </tr>
                                             <?php endforeach; ?>
                                         <?php endif; ?>

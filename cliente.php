@@ -6,6 +6,7 @@ require_once 'classes/Service.php';
 require_once 'classes/Rewards.php';
 require_once 'classes/ServiceChat.php';
 require_once 'classes/SystemSettings.php';
+require_once 'classes/ZoneManager.php';
 
 // Verificar autenticación
 if(!isset($_SESSION['user_id']) || $_SESSION['user_rol'] != 'cliente') {
@@ -20,8 +21,10 @@ $service = new Service();
 $rewards = new Rewards();
 $serviceChat = new ServiceChat();
 $settingsManager = new SystemSettings($user->conn);
+$zoneManager = new ZoneManager($user->conn);
 $appSettings = $settingsManager->getAll();
 $pointsPerServiceDisplay = (int) ($appSettings['loyalty_points_per_service'] ?? PUNTOS_POR_SERVICIO);
+$knownZones = $zoneManager->getKnownZones();
 
 // Obtener datos del cliente
 $cliente_query = "SELECT id FROM clientes WHERE user_id = :user_id";
@@ -48,8 +51,20 @@ if($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['solicitar_servicio']) &
     $tipo = $_POST['servicio_tipo'];
     $notas = $_POST['servicio_notas'];
     $horarios = $_POST['horario'] ?? [];
-    
-    $resultado = $service->solicitarServicio($cliente_id, $tipo, $notas, $horarios);
+    $zoneValidation = $zoneManager->validateServiceZoneInput(
+        (string) ($_POST['servicio_zona'] ?? ''),
+        (string) ($_POST['servicio_sector'] ?? '')
+    );
+
+    if (!$zoneValidation['valid']) {
+        setFlash('danger', $zoneValidation['message']);
+        redirect('cliente.php');
+    }
+
+    $resultado = $service->solicitarServicio($cliente_id, $tipo, $notas, $horarios, [
+        'zone_name' => $zoneValidation['zone'],
+        'sector_name' => $zoneValidation['sector'],
+    ]);
     if($resultado) {
         setFlash('success', '✅ Servicio solicitado exitosamente. Un barbero te contactará pronto.');
     } else {
@@ -121,13 +136,9 @@ if($cliente_id) {
 }
 
 // Barberos disponibles
-$barberos = [];
-$barberos_query = "SELECT b.*, u.nombre, u.telefono 
-    FROM barberos b
-    JOIN users u ON b.user_id = u.id
-    WHERE b.is_available = 1 AND b.verificacion_status = 'verificado'
-    ORDER BY b.calificacion_promedio DESC LIMIT 10";
-$barberos = $user->conn->query($barberos_query)->fetchAll(PDO::FETCH_ASSOC);
+$requestedZonePrefill = trim((string) ($_POST['servicio_zona'] ?? ''));
+$requestedSectorPrefill = trim((string) ($_POST['servicio_sector'] ?? ''));
+$barberos = $zoneManager->getAvailableBarbers($requestedZonePrefill, $requestedSectorPrefill);
 
 // Puntos del cliente
 $puntos = 0;
@@ -447,6 +458,21 @@ if($cliente_id) {
                                 <label><i class="fas fa-sticky-note"></i> Notas Adicionales</label>
                                 <textarea name="servicio_notas" rows="3" placeholder="Ej: Corte degradado, largo en la parte superior..."></textarea>
                             </div>
+                            <?php if ($zoneManager->isEnabled()): ?>
+                            <div class="form-group">
+                                <label><i class="fas fa-map-marker-alt"></i> Zona</label>
+                                <input list="zonas-disponibles" name="servicio_zona" value="<?php echo htmlspecialchars($requestedZonePrefill); ?>" placeholder="Ej: Norte, Centro, Sur" <?php echo $zoneManager->requireServiceZone() ? 'required' : ''; ?>>
+                                <datalist id="zonas-disponibles">
+                                    <?php foreach($knownZones as $knownZone): ?>
+                                    <option value="<?php echo htmlspecialchars($knownZone); ?>"></option>
+                                    <?php endforeach; ?>
+                                </datalist>
+                            </div>
+                            <div class="form-group">
+                                <label><i class="fas fa-map-signs"></i> Sector o barrio</label>
+                                <input type="text" name="servicio_sector" value="<?php echo htmlspecialchars($requestedSectorPrefill); ?>" placeholder="Ej: Chapinero, Laureles, Zona 10">
+                            </div>
+                            <?php endif; ?>
                             <div class="form-group">
                                 <label><i class="fas fa-calendar"></i> Preferencia de Horario</label>
                                 <div style="display: flex; gap: 15px; flex-wrap: wrap;">
@@ -566,10 +592,32 @@ if($cliente_id) {
                             <h3><?php echo $recompensa['nombre']; ?></h3>
                             <p><?php echo $recompensa['descripcion']; ?></p>
                             <div class="reward-points"><?php echo $recompensa['puntos_requeridos']; ?> puntos</div>
-                            <button class="btn btn-primary" onclick="canjearRecompensa(<?php echo $recompensa['id']; ?>)">Canjear</button>
+                            <button class="btn btn-primary" onclick="canjearRecompensa(<?php echo $recompensa['id']; ?>)" <?php echo $puntos < (int) $recompensa['puntos_requeridos'] ? 'disabled' : ''; ?>>Canjear</button>
                         </div>
                         <?php endforeach; ?>
                     </div>
+                </div>
+
+                <div class="table-container">
+                    <div class="table-header"><h3>Historial de Puntos</h3></div>
+                    <table class="table">
+                        <thead><tr><th>Fecha</th><th>Movimiento</th><th>Puntos</th><th>Detalle</th><th>Saldo</th></tr></thead>
+                        <tbody>
+                            <?php if(empty($historial_puntos)): ?>
+                                <tr><td colspan="5" style="text-align:center;">Todavia no tienes movimientos de puntos.</td></tr>
+                            <?php else: ?>
+                                <?php foreach($historial_puntos as $movimiento): ?>
+                                <tr>
+                                    <td><?php echo !empty($movimiento['fecha']) ? date('d/m/Y H:i', strtotime($movimiento['fecha'])) : '-'; ?></td>
+                                    <td><?php echo htmlspecialchars($movimiento['tipo_movimiento'] ?? ($movimiento['tipo'] ?? '')); ?></td>
+                                    <td><?php echo (int) ($movimiento['puntos'] ?? 0); ?></td>
+                                    <td><?php echo htmlspecialchars($movimiento['descripcion'] ?? ($movimiento['recompensa_nombre'] ?? $movimiento['servicio_tipo'] ?? '')); ?></td>
+                                    <td><?php echo isset($movimiento['balance_despues']) ? (int) $movimiento['balance_despues'] : '-'; ?></td>
+                                </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
                 </div>
             </section>
 

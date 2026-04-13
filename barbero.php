@@ -3,6 +3,8 @@
 require_once 'config/config.php';
 require_once 'classes/User.php';
 require_once 'classes/Service.php';
+require_once 'classes/MonetizationManager.php';
+require_once 'classes/ZoneManager.php';
 
 // Verificar autenticación
 if(!isset($_SESSION['user_id']) || $_SESSION['user_rol'] != 'barbero') {
@@ -14,6 +16,8 @@ $user->id = $_SESSION['user_id'];
 $profile = $user->getProfile();
 
 $service = new Service();
+$monetizationManager = new MonetizationManager($user->conn);
+$zoneManager = new ZoneManager($user->conn);
 
 // Obtener datos del barbero
 $barbero_query = "SELECT id, verificacion_status, is_available, calificacion_promedio, total_servicios 
@@ -24,6 +28,16 @@ $stmt->execute();
 $barbero = $stmt->fetch(PDO::FETCH_ASSOC);
 $barbero_id = $barbero['id'] ?? null;
 $verificacion_status = $barbero['verificacion_status'] ?? 'pendiente';
+$zoneCoverage = $barbero_id ? $zoneManager->getBarberCoverage((int) $barbero_id) : ['zone_name' => '', 'sectors_csv' => '', 'has_zone' => false];
+$zoneAlertSummary = $barbero_id ? $zoneManager->getZoneAlertSummary((int) $barbero_id) : ['enabled' => false, 'matching_pending' => 0, 'outside_pending' => 0, 'message' => ''];
+$monetizationProfile = $barbero_id ? $monetizationManager->getBarberProfile((int) $barbero_id) : [];
+$commissionSummary = $barbero_id ? $monetizationManager->getBarberCommissionSummary((int) $barbero_id) : [
+    'services_total' => 0,
+    'service_amount_total' => 0.0,
+    'commission_total' => 0.0,
+    'barber_amount_total' => 0.0,
+    'commission_month' => 0.0,
+];
 
 // Cambiar disponibilidad
 if(isset($_POST['toggle_disponible'])) {
@@ -50,6 +64,11 @@ if(isset($_POST['aceptar_servicio']) && $barbero_id) {
         verificarCSRFToken($_POST['csrf_token'] ?? null);
     } catch (Exception $e) {
         setFlash('danger', 'Sesion invalida. Intenta nuevamente.');
+        redirect('barbero.php');
+    }
+    $billingRestrictionReason = '';
+    if (!$monetizationManager->canBarberAcceptServices((int) $barbero_id, $billingRestrictionReason)) {
+        setFlash('danger', $billingRestrictionReason ?: 'Tu cuenta no puede aceptar nuevos servicios en este momento.');
         redirect('barbero.php');
     }
     $resultado = $service->aceptarServicio(
@@ -82,14 +101,7 @@ if(isset($_POST['finalizar_servicio']) && $barbero_id) {
 }
 
 // Obtener servicios pendientes
-$pendientes = [];
-$pendientes_query = "SELECT s.*, c.id as cliente_id, u.nombre as cliente_nombre, u.telefono, u.direccion
-    FROM servicios s
-    JOIN clientes c ON s.cliente_id = c.id
-    JOIN users u ON c.user_id = u.id
-    WHERE s.estado = 'pendiente'
-    ORDER BY s.fecha_solicitud ASC";
-$pendientes = $user->conn->query($pendientes_query)->fetchAll(PDO::FETCH_ASSOC);
+$pendientes = $barbero_id ? $zoneManager->getPendingServicesForBarber((int) $barbero_id) : [];
 
 // Servicios activos del barbero
 $activos = [];
@@ -252,6 +264,35 @@ if($barbero_id) {
             from { opacity: 0; transform: translateY(20px); }
             to { opacity: 1; transform: translateY(0); }
         }
+        .billing-card {
+            background: linear-gradient(135deg, #1f2a44 0%, #253b5c 100%);
+            color: #fff;
+            border-radius: 14px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 12px 30px rgba(31, 42, 68, 0.18);
+        }
+        .billing-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 14px;
+            margin-top: 18px;
+        }
+        .billing-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.12);
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .billing-note {
+            margin-top: 12px;
+            color: rgba(255,255,255,0.85);
+            font-size: 14px;
+        }
         .alert {
             padding: 15px 20px; border-radius: 8px; margin-bottom: 20px;
             display: flex; align-items: center; gap: 10px;
@@ -348,6 +389,13 @@ if($barbero_id) {
                         <h3><?php echo htmlspecialchars($_SESSION['user_email']); ?></h3>
                         <span class="role-badge">Barbero</span>
                     </div>
+                    <?php if (!empty($zoneAlertSummary['enabled'])): ?>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-bell"></i></div>
+                        <div class="stat-value"><?php echo (int) ($zoneAlertSummary['matching_pending'] ?? 0); ?></div>
+                        <div class="stat-label">Alertas en tu zona</div>
+                    </div>
+                    <?php endif; ?>
                 </div>
             </div>
             <nav class="nav-menu">
@@ -397,6 +445,63 @@ if($barbero_id) {
 
             <!-- Dashboard Section -->
             <section id="dashboard-section" class="section-content active">
+                <div class="billing-card">
+                    <div style="display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:flex-start;">
+                        <div>
+                            <h3 style="margin-bottom:8px;">Estado de monetizacion</h3>
+                            <div class="billing-pill">
+                                <i class="fas fa-wallet"></i>
+                                <?php echo ucfirst((string) ($monetizationProfile['status'] ?? 'free')); ?>
+                            </div>
+                            <?php if (!empty($monetizationProfile['restriction_reason'])): ?>
+                                <div class="billing-note"><?php echo htmlspecialchars($monetizationProfile['restriction_reason']); ?></div>
+                            <?php elseif (!empty($monetizationProfile['subscription_ends_at'])): ?>
+                                <div class="billing-note">Tu suscripcion vence el <?php echo date('d/m/Y', strtotime($monetizationProfile['subscription_ends_at'])); ?>.</div>
+                            <?php elseif (!empty($monetizationProfile['trial_end_date'])): ?>
+                                <div class="billing-note">Tu trial vence el <?php echo date('d/m/Y', strtotime($monetizationProfile['trial_end_date'])); ?>.</div>
+                            <?php else: ?>
+                                <div class="billing-note">Modo actual administrado desde el panel de configuracion global.</div>
+                            <?php endif; ?>
+                        </div>
+                        <div>
+                            <div class="billing-pill"><i class="fas fa-receipt"></i> Plan mensual: $<?php echo number_format((float) ($monetizationProfile['monthly_price'] ?? 0), 2); ?></div>
+                            <div class="billing-pill" style="margin-top:10px;"><i class="fas fa-calendar-alt"></i> Plan anual: $<?php echo number_format((float) ($monetizationProfile['annual_price'] ?? 0), 2); ?></div>
+                        </div>
+                    </div>
+                    <div class="billing-grid">
+                        <div class="stat-card" style="margin-bottom:0;">
+                            <div class="stat-icon"><i class="fas fa-piggy-bank"></i></div>
+                            <div class="stat-value">$<?php echo number_format((float) $commissionSummary['barber_amount_total'], 2); ?></div>
+                            <div class="stat-label">Neto historico</div>
+                        </div>
+                        <div class="stat-card" style="margin-bottom:0;">
+                            <div class="stat-icon"><i class="fas fa-percentage"></i></div>
+                            <div class="stat-value">$<?php echo number_format((float) $commissionSummary['commission_total'], 2); ?></div>
+                            <div class="stat-label">Comision acumulada</div>
+                        </div>
+                        <div class="stat-card" style="margin-bottom:0;">
+                            <div class="stat-icon"><i class="fas fa-calendar-check"></i></div>
+                            <div class="stat-value">$<?php echo number_format((float) $commissionSummary['commission_month'], 2); ?></div>
+                            <div class="stat-label">Comision del mes</div>
+                        </div>
+                        <div class="stat-card" style="margin-bottom:0;">
+                            <div class="stat-icon"><i class="fas fa-map-marker-alt"></i></div>
+                            <div class="stat-value"><?php echo htmlspecialchars($zoneCoverage['zone_name'] ?: 'Sin zona'); ?></div>
+                            <div class="stat-label">Cobertura principal</div>
+                        </div>
+                    </div>
+                    <?php if (!empty($zoneAlertSummary['enabled'])): ?>
+                    <div class="billing-note">
+                        <strong>Alertas por zona:</strong> <?php echo htmlspecialchars($zoneAlertSummary['message']); ?>
+                        <?php if (!empty($zoneCoverage['sectors_csv'])): ?>
+                        Cobertura adicional: <?php echo htmlspecialchars($zoneCoverage['sectors_csv']); ?>.
+                        <?php endif; ?>
+                        <?php if (!empty($zoneAlertSummary['alert_logs_today'])): ?>
+                        Alertas registradas hoy: <?php echo (int) $zoneAlertSummary['alert_logs_today']; ?>.
+                        <?php endif; ?>
+                    </div>
+                    <?php endif; ?>
+                </div>
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-icon"><i class="fas fa-clock"></i></div>
@@ -425,16 +530,22 @@ if($barbero_id) {
                         <h3>Servicios Pendientes</h3>
                     </div>
                     <table class="table">
-                        <thead><tr><th>Cliente</th><th>Tipo</th><th>Solicitado</th><th>Acciones</th></tr></thead>
+                        <thead><tr><th>Cliente</th><th>Tipo</th><th>Zona</th><th>Compatibilidad</th><th>Solicitado</th><th>Acciones</th></tr></thead>
                         <tbody>
                             <?php foreach($pendientes as $servicio): ?>
                             <tr>
                                 <td><?php echo htmlspecialchars($servicio['cliente_nombre']); ?></td>
                                 <td><?php echo $servicio['tipo']; ?></td>
+                                <td><?php echo htmlspecialchars(($servicio['zone_name'] ?? '') !== '' ? trim(($servicio['zone_name'] ?? '') . (($servicio['sector_name'] ?? '') !== '' ? ' / ' . $servicio['sector_name'] : '')) : 'Sin zona'); ?></td>
+                                <td><?php echo htmlspecialchars($servicio['zone_match_label'] ?? 'General'); ?></td>
                                 <td><?php echo date('d/m/Y H:i', strtotime($servicio['fecha_solicitud'])); ?></td>
                                 <td>
-                                    <button class="btn btn-success btn-sm" onclick="mostrarAceptar(<?php echo $servicio['id']; ?>)">
+                                    <button class="btn btn-success btn-sm" onclick="mostrarAceptar(<?php echo $servicio['id']; ?>)" <?php echo empty($monetizationProfile['can_accept_services']) ? 'disabled title="' . htmlspecialchars($monetizationProfile['restriction_reason'] ?? 'Bloqueado por monetizacion', ENT_QUOTES, 'UTF-8') . '"' : ''; ?>>
+                                        <?php if (empty($monetizationProfile['can_accept_services'])): ?>
+                                        <i class="fas fa-lock"></i> Bloqueado
+                                        <?php else: ?>
                                         <i class="fas fa-check"></i> Aceptar
+                                        <?php endif; ?>
                                     </button>
                                     <button class="btn btn-primary btn-sm" onclick="verDetalles(<?php echo $servicio['id']; ?>)">
                                         <i class="fas fa-eye"></i> Ver
@@ -444,7 +555,7 @@ if($barbero_id) {
                             </tr>
                             <?php endforeach; ?>
                             <?php if(empty($pendientes)): ?>
-                            <tr><td colspan="4" style="text-align: center;">No hay servicios pendientes</td></tr>
+                            <tr><td colspan="6" style="text-align: center;">No hay servicios pendientes</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
@@ -456,17 +567,23 @@ if($barbero_id) {
                 <div class="table-container">
                     <div class="table-header"><h3>Servicios Pendientes de Aceptar</h3></div>
                     <table class="table">
-                        <thead><tr><th>Cliente</th><th>Tipo</th><th>Notas</th><th>Solicitado</th><th>Acciones</th></tr></thead>
+                        <thead><tr><th>Cliente</th><th>Tipo</th><th>Zona</th><th>Compatibilidad</th><th>Notas</th><th>Solicitado</th><th>Acciones</th></tr></thead>
                         <tbody>
                             <?php foreach($pendientes as $servicio): ?>
                             <tr>
                                 <td><?php echo htmlspecialchars($servicio['cliente_nombre']); ?></td>
                                 <td><?php echo $servicio['tipo']; ?></td>
+                                <td><?php echo htmlspecialchars(($servicio['zone_name'] ?? '') !== '' ? trim(($servicio['zone_name'] ?? '') . (($servicio['sector_name'] ?? '') !== '' ? ' / ' . $servicio['sector_name'] : '')) : 'Sin zona'); ?></td>
+                                <td><?php echo htmlspecialchars($servicio['zone_match_label'] ?? 'General'); ?></td>
                                 <td><?php echo substr($servicio['notas'] ?? '', 0, 50); ?></td>
                                 <td><?php echo date('d/m/Y H:i', strtotime($servicio['fecha_solicitud'])); ?></td>
                                 <td>
-                                    <button class="btn btn-success btn-sm" onclick="mostrarAceptar(<?php echo $servicio['id']; ?>)">
+                                    <button class="btn btn-success btn-sm" onclick="mostrarAceptar(<?php echo $servicio['id']; ?>)" <?php echo empty($monetizationProfile['can_accept_services']) ? 'disabled title="' . htmlspecialchars($monetizationProfile['restriction_reason'] ?? 'Bloqueado por monetizacion', ENT_QUOTES, 'UTF-8') . '"' : ''; ?>>
+                                        <?php if (empty($monetizationProfile['can_accept_services'])): ?>
+                                        <i class="fas fa-lock"></i> Bloqueado
+                                        <?php else: ?>
                                         <i class="fas fa-check"></i> Aceptar
+                                        <?php endif; ?>
                                     </button>
                                     <button class="btn btn-primary btn-sm" onclick="verDetalles(<?php echo $servicio['id']; ?>)">
                                         <i class="fas fa-eye"></i> Ver
@@ -475,6 +592,9 @@ if($barbero_id) {
                                 </td>
                             </tr>
                             <?php endforeach; ?>
+                            <?php if(empty($pendientes)): ?>
+                            <tr><td colspan="7" style="text-align: center;">No hay servicios pendientes</td></tr>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
@@ -575,6 +695,16 @@ if($barbero_id) {
                                 <label>Tarifa por Hora (USD)</label>
                                 <input type="number" name="tarifa_hora" step="5" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:5px;" placeholder="Ej: 25">
                             </div>
+                            <?php if ($zoneManager->isEnabled()): ?>
+                            <div class="form-group">
+                                <label>Zona principal de cobertura</label>
+                                <input type="text" name="zona_cobertura" value="<?php echo htmlspecialchars($zoneCoverage['zone_name'] ?? ''); ?>" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:5px;" placeholder="Ej: Norte, Centro, Sur">
+                            </div>
+                            <div class="form-group">
+                                <label>Sectores o barrios</label>
+                                <input type="text" name="sectores_cobertura" value="<?php echo htmlspecialchars($zoneCoverage['sectors_csv'] ?? ''); ?>" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:5px;" placeholder="Ej: Chapinero, Cedritos, Prado">
+                            </div>
+                            <?php endif; ?>
                             <button type="submit" class="btn btn-primary">Guardar Perfil</button>
                         </form>
                     </div>
@@ -594,6 +724,12 @@ if($barbero_id) {
                 <?php echo csrf_field(); ?>
                 <div class="modal-body">
                     <input type="hidden" name="servicio_id" id="aceptar-servicio-id">
+                    <?php if (empty($monetizationProfile['can_accept_services'])): ?>
+                    <div class="alert alert-danger">
+                        <i class="fas fa-lock"></i>
+                        <?php echo htmlspecialchars($monetizationProfile['restriction_reason'] ?? 'Tu cuenta no puede aceptar nuevos servicios.'); ?>
+                    </div>
+                    <?php endif; ?>
                     <div class="form-group">
                         <label><i class="fas fa-clock"></i> Tiempo Estimado (minutos)</label>
                         <input type="number" name="tiempo_estimado" min="15" max="180" value="45" required>
@@ -605,7 +741,7 @@ if($barbero_id) {
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn" onclick="cerrarModal('aceptar-modal')">Cancelar</button>
-                    <button type="submit" name="aceptar_servicio" class="btn btn-success">Aceptar Servicio</button>
+                    <button type="submit" name="aceptar_servicio" class="btn btn-success" <?php echo empty($monetizationProfile['can_accept_services']) ? 'disabled' : ''; ?>>Aceptar Servicio</button>
                 </div>
             </form>
         </div>

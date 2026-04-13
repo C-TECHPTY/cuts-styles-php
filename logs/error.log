@@ -19,3 +19,5 @@
 [2026-04-11 23:42:15] Error completando servicio: There is no active transaction en C:\xampp\htdocs\cuts-styles-php\classes\Service.php:106
 [2026-04-11 23:42:39] No se pudieron asignar puntos: There is already an active transaction en C:\xampp\htdocs\cuts-styles-php\classes\LoyaltyManager.php:93
 [2026-04-11 23:42:39] Error completando servicio: There is no active transaction en C:\xampp\htdocs\cuts-styles-php\classes\Service.php:106
+[2026-04-12 18:57:53] Token CSRF invalido en C:\xampp\htdocs\cuts-styles-php\login.php:67
+[2026-04-12 19:22:44] Email o contraseña incorrectos en C:\xampp\htdocs\cuts-styles-php\login.php:67

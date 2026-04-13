@@ -5,6 +5,7 @@ require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/ServiceChat.php';
 require_once __DIR__ . '/MonetizationManager.php';
 require_once __DIR__ . '/LoyaltyManager.php';
+require_once __DIR__ . '/ZoneManager.php';
 
 class Service {
     public $conn;
@@ -14,7 +15,7 @@ class Service {
         $this->conn = $database->getConnection();
     }
 
-    public function solicitarServicio($cliente_id, $tipo, $notas, $horarios = []) {
+    public function solicitarServicio($cliente_id, $tipo, $notas, $horarios = [], array $zoneData = []) {
         $tipo = trim((string) $tipo);
         if ($cliente_id <= 0 || $tipo === '') {
             return false;
@@ -35,7 +36,25 @@ class Service {
         $stmt->bindParam(':notas', $notasCompletas);
 
         if ($stmt->execute()) {
-            return (int) $this->conn->lastInsertId();
+            $serviceId = (int) $this->conn->lastInsertId();
+            if ($serviceId > 0 && $zoneData !== []) {
+                try {
+                    $zoneManager = new ZoneManager($this->conn);
+                    if ($zoneManager->isEnabled()) {
+                        $zoneAssigned = $zoneManager->assignServiceZone(
+                            $serviceId,
+                            (string) ($zoneData['zone_name'] ?? ''),
+                            (string) ($zoneData['sector_name'] ?? '')
+                        );
+                        if ($zoneAssigned) {
+                            $zoneManager->registerAlertsForService($serviceId);
+                        }
+                    }
+                } catch (Throwable $e) {
+                    logError('No se pudo guardar la zona del servicio: ' . $e->getMessage(), __FILE__, __LINE__);
+                }
+            }
+            return $serviceId;
         }
         return false;
     }

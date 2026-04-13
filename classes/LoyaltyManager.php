@@ -127,6 +127,36 @@ class LoyaltyManager {
         }
     }
 
+    public function registerManualAdjustment(int $clienteId, int $pointsDelta, string $description = 'Ajuste manual de puntos'): bool {
+        if ($clienteId <= 0 || $pointsDelta === 0 || !$this->hasTable('puntos_historial')) {
+            return false;
+        }
+
+        try {
+            $balanceStmt = $this->conn->prepare("SELECT puntos FROM clientes WHERE id = :cliente_id LIMIT 1");
+            $balanceStmt->bindValue(':cliente_id', $clienteId, PDO::PARAM_INT);
+            $balanceStmt->execute();
+            $balance = (int) ($balanceStmt->fetchColumn() ?: 0);
+
+            $stmt = $this->conn->prepare(
+                "INSERT INTO puntos_historial
+                (cliente_id, tipo_movimiento, puntos, descripcion, balance_despues, fecha)
+                VALUES
+                (:cliente_id, 'adjustment', :puntos, :descripcion, :balance_despues, NOW())"
+            );
+            $stmt->bindValue(':cliente_id', $clienteId, PDO::PARAM_INT);
+            $stmt->bindValue(':puntos', $pointsDelta, PDO::PARAM_INT);
+            $stmt->bindValue(':descripcion', $description);
+            $stmt->bindValue(':balance_despues', $balance, PDO::PARAM_INT);
+            return $stmt->execute();
+        } catch (Throwable $e) {
+            if (function_exists('logError')) {
+                logError('No se pudo registrar ajuste manual de puntos: ' . $e->getMessage(), __FILE__, __LINE__);
+            }
+            return false;
+        }
+    }
+
     public function hasTable(string $table): bool {
         if (array_key_exists($table, $this->tableCache)) {
             return $this->tableCache[$table];
