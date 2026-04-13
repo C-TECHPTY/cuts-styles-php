@@ -334,10 +334,12 @@ class MonetizationManager {
             $updateProfile->bindValue(':barber_id', $barberoId, PDO::PARAM_INT);
             $updateProfile->execute();
 
-            $this->conn->commit();
+            if ($ownsTransaction && $this->conn->inTransaction()) {
+                $this->conn->commit();
+            }
             return ['success' => true, 'message' => 'Suscripcion activada correctamente.'];
         } catch (Throwable $e) {
-            if ($this->conn->inTransaction()) {
+            if (($ownsTransaction ?? false) && $this->conn->inTransaction()) {
                 $this->conn->rollBack();
             }
             if (function_exists('logError')) {
@@ -357,7 +359,10 @@ class MonetizationManager {
         }
 
         try {
-            $this->conn->beginTransaction();
+            $ownsTransaction = !$this->conn->inTransaction();
+            if ($ownsTransaction) {
+                $this->conn->beginTransaction();
+            }
 
             $cancelSubscription = $this->conn->prepare("UPDATE barber_subscriptions
                 SET status = 'cancelled', updated_at = NOW()
@@ -378,10 +383,12 @@ class MonetizationManager {
             $cancelProfile->bindValue(':barber_id', $barberoId, PDO::PARAM_INT);
             $cancelProfile->execute();
 
-            $this->conn->commit();
+            if ($ownsTransaction && $this->conn->inTransaction()) {
+                $this->conn->commit();
+            }
             return ['success' => true, 'message' => 'Suscripcion cancelada correctamente.'];
         } catch (Throwable $e) {
-            if ($this->conn->inTransaction()) {
+            if (($ownsTransaction ?? false) && $this->conn->inTransaction()) {
                 $this->conn->rollBack();
             }
             if (function_exists('logError')) {

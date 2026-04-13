@@ -1,6 +1,7 @@
 <?php
 // login.php
 require_once 'config/config.php';
+require_once BASE_PATH . 'includes/app_logo.php';
 
 $error = null;
 $email = '';
@@ -101,10 +102,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             padding: 40px 30px;
             text-align: center;
         }
-        .login-header i {
-            font-size: 50px;
-            color: #E74C3C;
-            margin-bottom: 15px;
+        .login-header .app-logo {
+            display: inline-flex;
+            flex-direction: column;
+            gap: 14px;
+            color: white;
+        }
+        .login-header .app-logo__image {
+            width: 112px;
+            height: 112px;
+            object-fit: contain;
+        }
+        .login-header .app-logo__text {
+            font-size: 28px;
+            font-weight: 800;
         }
         .login-header h1 {
             font-size: 28px;
@@ -197,8 +208,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 <body>
     <div class="login-container">
         <div class="login-header">
-            <i class="fas fa-cut"></i>
-            <h1>Cuts & Styles</h1>
+            <?php echo render_app_logo('login'); ?>
             <p>Inicia sesión para continuar</p>
         </div>
         

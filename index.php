@@ -4,6 +4,7 @@ require_once 'config/config.php';
 require_once 'classes/Product.php';
 require_once 'classes/User.php';
 require_once 'classes/Service.php';
+require_once BASE_PATH . 'includes/app_logo.php';
 
 $productClass = new Product();
 $userClass = new User();
@@ -99,17 +100,21 @@ $stats = $userClass->conn->query($stats_query)->fetch(PDO::FETCH_ASSOC);
             font-weight: 800;
             letter-spacing: -1px;
         }
-        
-        .logo i {
-            color: var(--secondary);
-            margin-right: 10px;
+        .logo .app-logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            color: white;
         }
-        
-        .logo span {
-            background: linear-gradient(135deg, var(--secondary), #ff6b6b);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+        .logo .app-logo__image {
+            width: 96px;
+            height: 96px;
+            object-fit: contain;
+        }
+        .logo .app-logo__text {
+            font-size: 1.8rem;
+            font-weight: 800;
+            letter-spacing: -1px;
         }
         
         .nav-links {
@@ -601,6 +606,11 @@ $stats = $userClass->conn->query($stats_query)->fetch(PDO::FETCH_ASSOC);
                 flex-direction: column;
                 gap: 1rem;
             }
+
+            .logo .app-logo__image {
+                width: 72px;
+                height: 72px;
+            }
             
             .nav-links {
                 flex-wrap: wrap;
@@ -640,8 +650,7 @@ $stats = $userClass->conn->query($stats_query)->fetch(PDO::FETCH_ASSOC);
     <nav class="navbar" id="navbar">
         <div class="navbar-container">
             <div class="logo">
-                <i class="fas fa-cut"></i>
-                <span>Cuts</span> & Styles
+                <?php echo render_app_logo('navbar'); ?>
             </div>
             <div class="nav-links">
                 <a href="#inicio">Inicio</a>

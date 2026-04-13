@@ -9,6 +9,8 @@ require_once __DIR__ . '/../classes/Rewards.php';
 require_once __DIR__ . '/../classes/SystemSettings.php';
 require_once __DIR__ . '/../classes/MonetizationManager.php';
 require_once __DIR__ . '/../classes/LoyaltyManager.php';
+require_once __DIR__ . '/../classes/SubscriptionPaymentManager.php';
+require_once BASE_PATH . 'includes/app_logo.php';
 
 // Verificar autenticación y rol de admin
 if(!isset($_SESSION['user_id']) || $_SESSION['user_rol'] != 'admin') {
@@ -24,6 +26,7 @@ $rewardsManager = new Rewards();
 $settingsManager = new SystemSettings($user->conn);
 $monetizationManager = new MonetizationManager($user->conn);
 $loyaltyManager = new LoyaltyManager($user->conn);
+$subscriptionPaymentManager = new SubscriptionPaymentManager($user->conn);
 $monetizationManager->initializeAllBarberProfiles();
 $monetizationManager->refreshBarberStatuses();
 
@@ -267,6 +270,30 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
         exit();
     }
 
+    if(isset($_POST['aprobar_pago_suscripcion'])) {
+        $requestId = (int) ($_POST['payment_request_id'] ?? 0);
+        $adminNotes = trim((string) ($_POST['admin_notes'] ?? ''));
+        $result = $subscriptionPaymentManager->approveRequest($requestId, (int) ($_SESSION['user_id'] ?? 0), $adminNotes);
+        $_SESSION['flash'] = [
+            'type' => $result['success'] ? 'success' : 'danger',
+            'message' => $result['message']
+        ];
+        header("Location: " . BASE_URL . "admin/dashboard.php#configuracion");
+        exit();
+    }
+
+    if(isset($_POST['rechazar_pago_suscripcion'])) {
+        $requestId = (int) ($_POST['payment_request_id'] ?? 0);
+        $adminNotes = trim((string) ($_POST['admin_notes'] ?? ''));
+        $result = $subscriptionPaymentManager->rejectRequest($requestId, (int) ($_SESSION['user_id'] ?? 0), $adminNotes);
+        $_SESSION['flash'] = [
+            'type' => $result['success'] ? 'success' : 'danger',
+            'message' => $result['message']
+        ];
+        header("Location: " . BASE_URL . "admin/dashboard.php#configuracion");
+        exit();
+    }
+
     // Guardar configuracion extendida
     if(isset($_POST['guardar_config'])) {
         $trialDays = (int) ($_POST['barber_trial_days'] ?? 15);
@@ -289,6 +316,10 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
             'barber_subscription_enabled' => isset($_POST['barber_subscription_enabled']) ? '1' : '0',
             'barber_subscription_monthly_price' => number_format((float) ($_POST['barber_subscription_monthly_price'] ?? 0), 2, '.', ''),
             'barber_subscription_annual_price' => number_format((float) ($_POST['barber_subscription_annual_price'] ?? 0), 2, '.', ''),
+            'barber_subscription_payment_method' => trim((string) ($_POST['barber_subscription_payment_method'] ?? '')),
+            'barber_subscription_payment_instructions' => trim((string) ($_POST['barber_subscription_payment_instructions'] ?? '')),
+            'barber_subscription_payment_link' => trim((string) ($_POST['barber_subscription_payment_link'] ?? '')),
+            'barber_subscription_manual_receipt_enabled' => isset($_POST['barber_subscription_manual_receipt_enabled']) ? '1' : '0',
             'barber_commission_enabled' => isset($_POST['barber_commission_enabled']) ? '1' : '0',
             'barber_commission_percentage' => number_format((float) ($_POST['barber_commission_percentage'] ?? 0), 2, '.', ''),
             'barber_commission_cap' => trim((string) ($_POST['barber_commission_cap'] ?? '')),
@@ -537,6 +568,8 @@ if ($currentBalanceResult) {
 
 $recompensasAdmin = $rewardsManager->getRecompensasAdmin();
 $pointsHistoryAdmin = $rewardsManager->getHistorialPuntosAdmin(40);
+$subscriptionPaymentSummary = $subscriptionPaymentManager->getSummary();
+$subscriptionPaymentRequests = $subscriptionPaymentManager->getRequests('all', 40);
 
 // Flash message
 $flash = isset($_SESSION['flash']) ? $_SESSION['flash'] : null;
@@ -584,7 +617,9 @@ unset($_SESSION['flash']);
         }
         .sidebar-header { padding: 25px; border-bottom: 1px solid rgba(255,255,255,0.1); }
         .sidebar-header h2 { font-size: 24px; display: flex; align-items: center; gap: 10px; }
-        .sidebar-header h2 i { color: var(--secondary); }
+        .sidebar-header .app-logo { display: inline-flex; align-items: center; gap: 10px; color: white; }
+        .sidebar-header .app-logo__image { width: 54px; height: 54px; object-fit: contain; }
+        .sidebar-header .app-logo__text { font-size: 24px; font-weight: 700; line-height: 1; }
         .admin-info {
             padding: 20px 25px;
             background: rgba(255,255,255,0.05);
@@ -1088,7 +1123,7 @@ unset($_SESSION['flash']);
         <!-- Sidebar -->
         <aside class="sidebar">
             <div class="sidebar-header">
-                <h2><i class="fas fa-cut"></i> <span>Cuts & Styles</span></h2>
+                <h2><?php echo render_app_logo('sidebar'); ?></h2>
             </div>
             <div class="admin-info">
                 <div class="admin-avatar"><i class="fas fa-user-shield"></i></div>
@@ -1470,6 +1505,20 @@ unset($_SESSION['flash']);
                                 </div>
                             </div>
                             <div class="config-section">
+                                <h4><i class="fas fa-money-check-dollar"></i> Pago Manual de Suscripcion</h4>
+                                <div class="config-row">
+                                    <div class="form-group"><label><input type="checkbox" name="barber_subscription_manual_receipt_enabled" value="1" <?php echo !empty($appSettings['barber_subscription_manual_receipt_enabled']) ? 'checked' : ''; ?>> Permitir comprobante manual</label><small>El barbero podra subir imagen o PDF y quedara pendiente.</small></div>
+                                    <div class="form-group"><label>Metodo visible</label><input type="text" name="barber_subscription_payment_method" value="<?php echo htmlspecialchars($appSettings['barber_subscription_payment_method'] ?? 'Transferencia bancaria'); ?>" placeholder="Yappy, transferencia bancaria, link de pago"></div>
+                                    <div class="form-group"><label>Link de pago externo</label><input type="url" name="barber_subscription_payment_link" value="<?php echo htmlspecialchars($appSettings['barber_subscription_payment_link'] ?? ''); ?>" placeholder="https://"></div>
+                                </div>
+                                <div class="config-row">
+                                    <div class="form-group" style="grid-column: 1 / -1;">
+                                        <label>Instrucciones de pago</label>
+                                        <textarea name="barber_subscription_payment_instructions" rows="4" placeholder="Banco, numero de cuenta, pasos y notas para el barbero"><?php echo htmlspecialchars($appSettings['barber_subscription_payment_instructions'] ?? ''); ?></textarea>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="config-section">
                                 <h4><i class="fas fa-percentage"></i> Comision por Corte</h4>
                                 <div class="config-row">
                                     <div class="form-group"><label><input type="checkbox" name="barber_commission_enabled" value="1" <?php echo !empty($appSettings['barber_commission_enabled']) ? 'checked' : ''; ?>> Activar comision</label></div>
@@ -1593,6 +1642,69 @@ unset($_SESSION['flash']);
                                                             <i class="fas fa-ban"></i> Cancelar
                                                         </button>
                                                     </form>
+                                                </td>
+                                            </tr>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="config-section">
+                            <h4><i class="fas fa-file-invoice-dollar"></i> Solicitudes de Pago de Suscripcion</h4>
+                            <div class="stats-grid">
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-hourglass-half"></i></div><div class="stat-value"><?php echo (int) ($subscriptionPaymentSummary['pending'] ?? 0); ?></div><div class="stat-label">Pendientes</div></div>
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-check-circle"></i></div><div class="stat-value"><?php echo (int) ($subscriptionPaymentSummary['approved'] ?? 0); ?></div><div class="stat-label">Aprobadas</div></div>
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-times-circle"></i></div><div class="stat-value"><?php echo (int) ($subscriptionPaymentSummary['rejected'] ?? 0); ?></div><div class="stat-label">Rechazadas</div></div>
+                                <div class="stat-card"><div class="stat-icon"><i class="fas fa-wallet"></i></div><div class="stat-value">$<?php echo number_format((float) ($subscriptionPaymentSummary['pending_amount'] ?? 0), 2); ?></div><div class="stat-label">Monto pendiente</div></div>
+                            </div>
+                            <div class="table-container">
+                                <div class="table-header"><h3>Revision administrativa de comprobantes</h3></div>
+                                <table class="table">
+                                    <thead><tr><th>Barbero</th><th>Plan</th><th>Monto</th><th>Referencia</th><th>Comprobante</th><th>Fecha</th><th>Estado</th><th>Revision</th></tr></thead>
+                                    <tbody>
+                                        <?php if (empty($subscriptionPaymentRequests)): ?>
+                                            <tr><td colspan="8" style="text-align:center;">No hay solicitudes de pago registradas todavia. Ejecuta la migracion nueva para habilitar este flujo.</td></tr>
+                                        <?php else: ?>
+                                            <?php foreach ($subscriptionPaymentRequests as $paymentRequest): ?>
+                                            <tr>
+                                                <td>
+                                                    <strong><?php echo htmlspecialchars($paymentRequest['barber_name']); ?></strong><br>
+                                                    <small><?php echo htmlspecialchars($paymentRequest['barber_email']); ?></small>
+                                                </td>
+                                                <td><?php echo htmlspecialchars($paymentRequest['plan_type'] === 'annual' ? 'Anual' : 'Mensual'); ?></td>
+                                                <td>$<?php echo number_format((float) ($paymentRequest['amount'] ?? 0), 2); ?></td>
+                                                <td><?php echo htmlspecialchars($paymentRequest['payment_reference'] ?? '-'); ?></td>
+                                                <td>
+                                                    <?php if (!empty($paymentRequest['receipt_path'])): ?>
+                                                        <a class="btn btn-primary btn-sm" href="<?php echo BASE_URL . ltrim($paymentRequest['receipt_path'], '/'); ?>" target="_blank" rel="noopener noreferrer">
+                                                            <i class="fas fa-paperclip"></i> Ver
+                                                        </a>
+                                                    <?php else: ?>
+                                                        <span class="badge badge-warning">Sin archivo</span>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td><?php echo date('d/m/Y H:i', strtotime($paymentRequest['created_at'])); ?></td>
+                                                <td><span class="badge badge-info"><?php echo htmlspecialchars($paymentRequest['status']); ?></span></td>
+                                                <td>
+                                                    <?php if (($paymentRequest['status'] ?? '') === 'pending'): ?>
+                                                        <form method="POST" style="display:grid; gap:8px;">
+                                                            <?php echo csrf_field(); ?>
+                                                            <input type="hidden" name="payment_request_id" value="<?php echo (int) $paymentRequest['id']; ?>">
+                                                            <textarea name="admin_notes" rows="2" placeholder="Nota interna u observacion"><?php echo htmlspecialchars($paymentRequest['admin_notes'] ?? ''); ?></textarea>
+                                                            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                                                <button type="submit" name="aprobar_pago_suscripcion" class="btn btn-success btn-sm"><i class="fas fa-check"></i> Aprobar</button>
+                                                                <button type="submit" name="rechazar_pago_suscripcion" class="btn btn-danger btn-sm"><i class="fas fa-ban"></i> Rechazar</button>
+                                                            </div>
+                                                        </form>
+                                                    <?php else: ?>
+                                                        <small>
+                                                            <?php echo !empty($paymentRequest['reviewed_by_name']) ? 'Por ' . htmlspecialchars($paymentRequest['reviewed_by_name']) . '<br>' : ''; ?>
+                                                            <?php echo !empty($paymentRequest['reviewed_at']) ? date('d/m/Y H:i', strtotime($paymentRequest['reviewed_at'])) : ''; ?>
+                                                            <?php if (!empty($paymentRequest['admin_notes'])): ?><br><?php echo htmlspecialchars($paymentRequest['admin_notes']); ?><?php endif; ?>
+                                                        </small>
+                                                    <?php endif; ?>
                                                 </td>
                                             </tr>
                                             <?php endforeach; ?>

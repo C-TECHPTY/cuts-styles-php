@@ -7,6 +7,7 @@ require_once 'classes/Rewards.php';
 require_once 'classes/ServiceChat.php';
 require_once 'classes/SystemSettings.php';
 require_once 'classes/ZoneManager.php';
+require_once BASE_PATH . 'includes/app_logo.php';
 
 // Verificar autenticación
 if(!isset($_SESSION['user_id']) || $_SESSION['user_rol'] != 'cliente') {
@@ -184,7 +185,9 @@ if($cliente_id) {
         }
         .sidebar-header { padding: 25px; border-bottom: 1px solid rgba(255,255,255,0.1); }
         .sidebar-header h2 { font-size: 24px; margin-bottom: 20px; }
-        .sidebar-header h2 i { color: var(--secondary); margin-right: 10px; }
+        .sidebar-header .app-logo { display: inline-flex; align-items: center; gap: 10px; color: white; }
+        .sidebar-header .app-logo__image { width: 54px; height: 54px; object-fit: contain; }
+        .sidebar-header .app-logo__text { font-size: 24px; font-weight: 700; line-height: 1; }
         .user-info { display: flex; align-items: center; gap: 15px; margin-top: 15px; }
         .user-avatar {
             width: 50px; height: 50px; border-radius: 50%;
@@ -345,7 +348,7 @@ if($cliente_id) {
     <div class="dashboard-container">
         <aside class="sidebar">
             <div class="sidebar-header">
-                <h2><i class="fas fa-cut"></i> <span>Cuts & Styles</span></h2>
+                <h2><?php echo render_app_logo('sidebar'); ?></h2>
                 <div class="user-info">
                     <div class="user-avatar"><i class="fas fa-user"></i></div>
                     <div class="user-details">

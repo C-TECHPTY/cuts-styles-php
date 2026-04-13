@@ -5,6 +5,8 @@ require_once 'classes/User.php';
 require_once 'classes/Service.php';
 require_once 'classes/MonetizationManager.php';
 require_once 'classes/ZoneManager.php';
+require_once 'classes/SubscriptionPaymentManager.php';
+require_once BASE_PATH . 'includes/app_logo.php';
 
 // Verificar autenticación
 if(!isset($_SESSION['user_id']) || $_SESSION['user_rol'] != 'barbero') {
@@ -17,6 +19,7 @@ $profile = $user->getProfile();
 
 $service = new Service();
 $monetizationManager = new MonetizationManager($user->conn);
+$paymentManager = new SubscriptionPaymentManager($user->conn);
 $zoneManager = new ZoneManager($user->conn);
 
 // Obtener datos del barbero
@@ -38,6 +41,8 @@ $commissionSummary = $barbero_id ? $monetizationManager->getBarberCommissionSumm
     'barber_amount_total' => 0.0,
     'commission_month' => 0.0,
 ];
+$subscriptionPaymentConfig = $paymentManager->getPaymentConfig();
+$subscriptionPaymentHistory = $barbero_id ? $paymentManager->getBarberRequests((int) $barbero_id, 3) : [];
 
 // Cambiar disponibilidad
 if(isset($_POST['toggle_disponible'])) {
@@ -181,7 +186,22 @@ if($barbero_id) {
         }
         .sidebar-header { padding: 25px; border-bottom: 1px solid rgba(255,255,255,0.1); }
         .sidebar-header h2 { font-size: 24px; margin-bottom: 20px; }
-        .sidebar-header h2 i { color: var(--secondary); margin-right: 10px; }
+        .sidebar-header .app-logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            color: white;
+        }
+        .sidebar-header .app-logo__image {
+            width: 54px;
+            height: 54px;
+            object-fit: contain;
+        }
+        .sidebar-header .app-logo__text {
+            font-size: 24px;
+            font-weight: 700;
+            line-height: 1;
+        }
         .user-info { display: flex; align-items: center; gap: 15px; }
         .user-avatar {
             width: 50px; height: 50px; border-radius: 50%;
@@ -382,7 +402,7 @@ if($barbero_id) {
     <div class="dashboard-container">
         <aside class="sidebar">
             <div class="sidebar-header">
-                <h2><i class="fas fa-cut"></i> <span>Cuts & Styles</span></h2>
+                <h2><?php echo render_app_logo('sidebar'); ?></h2>
                 <div class="user-info">
                     <div class="user-avatar"><i class="fas fa-user-tie"></i></div>
                     <div class="user-details">
@@ -466,6 +486,12 @@ if($barbero_id) {
                         <div>
                             <div class="billing-pill"><i class="fas fa-receipt"></i> Plan mensual: $<?php echo number_format((float) ($monetizationProfile['monthly_price'] ?? 0), 2); ?></div>
                             <div class="billing-pill" style="margin-top:10px;"><i class="fas fa-calendar-alt"></i> Plan anual: $<?php echo number_format((float) ($monetizationProfile['annual_price'] ?? 0), 2); ?></div>
+                            <?php if (!empty($subscriptionPaymentConfig['subscription_enabled'])): ?>
+                            <a href="barbero_suscripcion.php" class="btn btn-primary" style="margin-top:12px;">
+                                <i class="fas fa-credit-card"></i>
+                                <?php echo !empty($monetizationProfile['subscription_ends_at']) ? 'Renovar Suscripcion' : 'Pagar Suscripcion'; ?>
+                            </a>
+                            <?php endif; ?>
                         </div>
                     </div>
                     <div class="billing-grid">
@@ -500,6 +526,17 @@ if($barbero_id) {
                         Alertas registradas hoy: <?php echo (int) $zoneAlertSummary['alert_logs_today']; ?>.
                         <?php endif; ?>
                     </div>
+                    <?php endif; ?>
+                    <?php if (!empty($subscriptionPaymentHistory)): ?>
+                    <div class="billing-note">
+                        <?php $lastPaymentRequest = $subscriptionPaymentHistory[0]; ?>
+                        <strong>Ultimo comprobante:</strong>
+                        <?php echo htmlspecialchars($lastPaymentRequest['plan_type'] === 'annual' ? 'Plan anual' : 'Plan mensual'); ?>
+                        enviado el <?php echo date('d/m/Y H:i', strtotime($lastPaymentRequest['created_at'])); ?>
+                        con estado <?php echo htmlspecialchars($lastPaymentRequest['status']); ?>.
+                    </div>
+                    <?php elseif (!empty($subscriptionPaymentConfig['subscription_enabled'])): ?>
+                    <div class="billing-note">Ya puedes iniciar el pago manual de tu suscripcion desde este panel.</div>
                     <?php endif; ?>
                 </div>
                 <div class="stats-grid">
